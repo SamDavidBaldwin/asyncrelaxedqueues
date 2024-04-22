@@ -1,0 +1,164 @@
+\documentclass[a4paper,english]{article}
+\usepackage[margin=3cm]{geometry}
+
+% colors
+\usepackage{xcolor, amsmath}
+\definecolor{amaranth}{rgb}{0.9, 0.17, 0.31}
+\colorlet{green}{green!20}
+\colorlet{yellow}{yellow!60}
+\colorlet{red}{red!30}
+
+% pseudocode formatting
+\usepackage{setspace}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+\renewcommand{\KwSty}[1]{\textnormal{\textcolor{amaranth!90!black}{\bfseries #1}}\unskip}
+\renewcommand{\ArgSty}[1]{\textnormal{\ttfamily #1}\unskip}
+\SetKwComment{Comment}{\color{green!80!black!190}// }{}
+\renewcommand{\CommentSty}[1]{\textnormal{\ttfamily\color{green!80!black!190}#1}\unskip}
+\newcommand{\var}{\texttt}
+\newcommand{\FuncCall}[2]{\texttt{\bfseries #1(#2)}}
+\SetKwProg{Function}{HandleEvent}{}{}
+\SetKw{Continue}{continue}
+\renewcommand{\ProgSty}[1]{\texttt{\bfseries #1}}
+\DontPrintSemicolon
+\SetAlFnt{\small}
+\SetAlgorithmName{Algorithm}{algorithmautorefname}
+
+% pseudocode highlighting
+\usepackage{tikz}
+\usetikzlibrary{fit,calc}
+% two slightly different boxit commands, to ensure the inner boxes end at the same spot
+\newcommand{\boxit}[2]{
+    \tikz[remember picture,overlay] \node (A) {};\ignorespaces
+    \tikz[remember picture,overlay]{\node[yshift=3pt,fill=#1,opacity=.25,fit={($(A)+(0,0.15\baselineskip)$)($(A)+(.9\linewidth,-{#2}\baselineskip - 0.25\baselineskip)$)}] {};}\ignorespaces
+}
+\newcommand{\boxitt}[2]{
+    \tikz[remember picture,overlay] \node (A) {};\ignorespaces
+    \tikz[remember picture,overlay]{\node[yshift=3pt,fill=#1,opacity=.25,fit={($(A)+(0,0.15\baselineskip)$)($(A)+(.858\linewidth,-{#2}\baselineskip - 0.25\baselineskip)$)}] {};}\ignorespaces
+}
+
+\usepackage{algpseudocode}
+
+\title{KOO Async Queue}
+\author{Cole Hausman \& Sam Pokemon Baldwin}
+\date{How is it already April}
+\begin{document}
+\maketitle
+
+
+
+\begin{algorithm}
+  \caption{Code for each process $p_i$ to implement a Queue with out-of-order k-relaxed \textit{Dequeue}, where $k \geq n$ and $l = [k/n]$}
+
+  \Function{Enqueue(\textit{val})}{
+    \textit{EnqCount} $= 0$\;
+    \textit{updateTS}($v_i$)\;
+    \textit{enq\_timestamp} = $v_i$\;
+    send (\textit{EnqReq, val, i, enq\_timestamp}) to all processes
+  }
+
+  \Function{Receive(\textit{EnqReq, val, j, enq\_timestamp}) from $p_j$}{
+    \textit{updateTS}($v_i$, $v_j$)\;
+    \If {\textit{enq\_timestamp} not in Pending\_Enqueues} {
+      Pending\_Enqueues.\textit{insertByTS}(\textit{enq\_timestamp, val})
+    }
+
+    send (\textit{EnqAck}, $i$) to $p_j$
+  }
+
+  \Function{Receive(\textit{EnqAck}) from $p_j$} {
+    \textit{EnqCount} $+= 1$ \;
+    \If {\textit{EnqCount} == $n$} {
+      \If {localQueue.size < $k$}{
+      send (\textit{EnqConfirm, enq\_timestamp}) to all processes\;
+      }
+    }
+
+    return \textit{EnqResponse}
+  }
+
+  \Function{Receive(\textit{EnqConfirm, enq\_timestamp}) from $p_j$} {
+    \textit{localQueue.insertByTS}(\textit{Pending\_Enqueues.getByTS}(\textit{enq\_timestamp}))\;
+    \boxit{yellow}{3}
+    \If (\Comment{localQueues agree by this point}) {\textit{clean} == true and \textit{localQueue.size}() $\leq k$} {
+      let procNum = (\textit{localQueue.size}() $-1$) mod $n$\;
+      \textit{localQueue.label}($p_{\text{procNum}}$, \textit{localQueue.tail}())\;
+    }
+  }
+
+\end{algorithm}
+
+\begin{algorithm}
+
+  \Function{Dequeue} {
+    $v_i$ += $1$\;
+    let $\textit{Deq}_{\text{ts}}$ = $v_i$\;
+    \eIf{localQueue.$\textit{peekByLabel($p_{i}$)}$ $\neq$ $\perp$}{
+      let ret = localQueue.$\textit{deqByLabel($p_{i}$)}$\;
+      send ($\textit{Deq}_{\text{f}}$, ret, $\textit{Deq}_{\text{ts}}$) to all processes\;
+    }{
+      send ($\textit{Deq}_{\text{s}}$, $\textit{null}$, $\textit{Deq}_{\text{ts}}$)) to all processes\;
+    }
+}
+
+\Function{Receive ($\textit{deq}_{\text{f}}$, val, $\textit{Deq}_{\text{ts}}$) from $p_j$}{
+  \If {$j$ $\neq$ $i$} {localQueue.remove(val)}
+}
+
+\Function{Receive ($\textit{deq}_{\text{s}}$, val, $\textit{Deq}_{\text{ts}}$) from $p_j$}{
+  $\textit{UpdateTs}$($v_i$, $\textit{Deq}_{\text{ts}}$)\;
+
+\If{$\textit{Deq}_{\text{ts}}$ not in PendingDequeues}{
+    PendingDequeues.$\textit{insertByTs}$($\textit{createList}$($\textit{Deq}_{\text{ts}}$, $p_{invoker}$))\;
+  }
+
+  let $p_{invoker}$ = $j$\;
+  \eIf{$\textit{Deq}_{\text{ts}}$ $\neq$ $0$ $\textbf{and}$ $\textit{Deq}_{\text{ts}}$ < $v_i$}{
+    send ($\textit{Unsafe}$, $\textit{Deq}_{\text{ts}}$, $i$, $p_{invoker}$) to all processes\;
+  }{
+    send ($\textit{Safe}$, $\textit{Deq}_{\text{ts}}$, $i$, $p_{invoker}$) to all processes\;
+  }
+}
+
+\Function{Receive ($\textit{Safe/Unsafe}$, $\textit{Deq}_{\text{ts}}$, $j$, $p_{invoker}$)}{
+  \If{$\textit{Deq}_{\text{ts}}$ not in PendingDequeues}{
+    PendingDequeues.$\textit{insertByTs}$($\textit{createList}$($\textit{Deq}_{\text{ts}}$, $p_{invoker}$))\;
+  }
+    \For{$\textit{confirmationList}$ in PendingDequeues}{
+      \If{$\textit{confirmationList}$.ts ==  $\textit{Deq}_{\text{ts}}$}{
+        \eIf{$\textit{Unsafe}$}{
+          let response = 2\;
+        }{
+          let response = 1\;
+        }
+        $\textit{confirmationList}$.list[$j$] = response\;
+      }
+      $\textit{propagateEarlierResponses}$(PendingDequeues)\;
+    }
+
+    \For{($\textit{index}$, $\textit{confirmationList}$) in PendingDequeues}{
+      \If{not $\textit{confirmationList}$.contains(0) and not $\textit{confirmationList}$.handled}{
+        let pos = 0\;
+        \For{$\textit{response}$ in $\textit{confirmationList}.list$}{
+          \If{$\textit{response}$ == $2$}{
+            pos += $1$\;
+          }
+        }
+        $\textit{confirmationList}$.handled = True\;
+        $\textit{updateUnsafes}$(Lists, $\textit{index}$)\;
+        let ret = localQueue.$\textit{deqByIndex}$(pos)\;
+        $\textit{labelElements}$($p_{invoker}$)\;
+        \If{$i$ == $p_{invoker}$}{
+          $\textbf{return}$ ret\;
+        }
+
+      }
+    }
+  }
+
+
+\end{algorithm}
+
+
+
+\end{document}
