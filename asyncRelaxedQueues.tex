@@ -49,6 +49,8 @@
 %%%%%%%%%%%%%%%
 \section{Introduction}
 
+This paper proposes a new algorithm for implementing a standard FIFO queue in a fully asynchronous message passing mode. To our knowledge we have not encountered any previous work that suggested a queue algorithm for this specific model. Our algorithm utilizes vector clock timestamps that allow individual processes to hold some view of the time steps of other processes have taken at points of communication. Using this technique to timestamp invocations of the two operations of the queue, then linearizing all of the queue invocations based on the ascending lexicographic order of these timestmps creates a valid permutation that meets the specifications of a FIFO Queue.  The goal of establishing this queue method is to design a system with full replication. There are existing systems that handle the asynchronous queue (server client model), but are incapable of replication. With replication, and (INSERT THE CITATION TO THE PAPER HERE) we hope that this queue algorithm can be used in fault tolerant systems in the future.
+
 %%%%%%%%%%%%%%%
 \subsection{Related Work}
 
@@ -56,7 +58,22 @@
 \section{Model and Definitions}
 
 %%%%%%%%%%%%%%%
+\subsection{Asynchronous System Model}
+We assume a fully asynchronous message passing model, with a set of $n$ processes $\Pi = [p_0, \dots , p_{n-1}]$ modeled as state machines. These state machines are time-free, meaning that their output is only described through their input and state transitions without any specific time bound. All inter-process communication is assumed to be reliable i.e any message that is sent will always be received at it’s destination process.  Additionally, communication channels between processes are considered to be treated as FIFO, in that any message sent from process $A$ to process $B$ will be processed prior to any other message from the same pair sent later in an execution. This can be accomplished by assuming that each process has an incoming buffer for each other process, and that inter-process messages are marked numerically, and out of order messages are stored in the buffer until they can be retrieved in order.  We also assume no processes crash, and none of the processes have access to a hardware clock.
+
+%%%%%%%%%%%%%%%
 \subsection{Queue Definitions}
+
+We introduce the definition for a standard FIFO Queue abstract data type. We will use the special character $\bot$ to represent an empty queue.
+
+\begin{definition} A \emph{Queue} over a set of values V is a data type with two operations:
+  \begin{itemize}
+  \item $Enqueue(val,-)$ adds the value X to the queue
+  \item $Dequeue(-, val)$ returns the oldest value in the queue.
+  \end{itemize}
+
+  A sequence of queue operations is legal iff it satisfies the following conditions.  The empty sequence is a legal sequence.  Each Enqueue value is unique. Once a value has been enqueued to the queue once, it can not be enqueued again.  If $\rho$ is a legal sequence of operation instances, then $\rho \cdot Dequeue(-, val), val \neq \bot$ is legal iff Enqueue(val, -) is the first $Enqueue$ instance in $\rho$ that does not already have a matching $Dequeue(-, val)$ in $\rho$. Furthermore, $\rho \cdot Dequeue(-, \bot)$ is legal iff every $Enqueue(val, -)$ in $\rho$ has a matching $Dequeue(-,val)$ in $\rho$.
+\end{definition}
 
 %%%%%%%%%%%%%%%
 \section{Asynchronous FIFO Queues}
@@ -64,11 +81,26 @@
 %%%%%%%%%%%%%%%
 \subsection{Description}
 
+Each process stores a vector clock timestamp that holds its local view of the clocks at all other processes. Thus the vector clock timestamp at vi, dictating the vector clock view of process i is an array of size n (number of processes in this system) that is initially 0 at all indices. At the point when a process starts an $Enqueue()$ or $Dequeue()$ invocation, that process will increment their own index in the local clock timestamp, which marks a step or clock tick.  Processes also update the local view of the vector clocks when they receive a message containing a timestamp from another process. This occurs each Enqueue and Dequeue invocation and response, as as a part of the payload of each of these messages, the timestamp at the point in which it was invoked is included. This results in processes regularly updating the local views of their clocks, resulting in processes being as updated as possible. To update the local vector clock, values at corresponding indexes in the local clock and message clock are compared, and the larger of the two values is set to the local view. By adjusting each of these indices, this guarantees that a local clock will have the largest of the two indices at all indices in the local clock, and therefore has the most advanced possible clock at that point in the execution.  For any two vector timestamps $v_ii$ and $v_j$ , such that $v_i \prec  v_j$, states that $v_i$ is a strictly smaller timestamp than $v_j$, if $v_i[x] < v_j[x],\forall x \in [0, \dots, n-1]$. If this is not true, there is some index k, the first element that is different between the two vector timestamps $v_i$ and $v_j$ i.e. for $x = 0$ to $k-1, v_i[k] < v_j[x]$ but at index $k$, $v_i[k] \geq v_j [k]$. Then we say that $v_i$ is lexicographically smaller than $v_j$, $v_i << v_j$ if $v_i[i] < v_j[i]$. Notice that $v_i \prec v_j$ implies that $v_i << v_j$ but not the opposite.
+
+Within each process there is a local version of an augmented minimum priority queue keyed on lexicographic timestamp order. This priority queue can perform three operations: $insert(value, v_{clock})$, $get(position)$, $remove(value)$. The insert operation adds the value to the queue based on the vclock as a priority. The $get(position)$ function allows the user to peek into the element at the passed position without removing a value from the queue. The $remove(value)$ function removes the specific value passed to it from the queue which can be at any location in the queue. Ordering elements in FIFO order is not a straight-faced task in a distributed setting since defining which invocation happened first is not as clear as in a linear setup. Consequently using a priority queue keyed on lexicographic timestamp order allows us to ensure some order locally to guarantee FIFO consistency to the user once linearized.
+
+%%%%%%%%%%
+\subsubsection{Confirmation Lists}
+The main structure of this algorithm it to utilize a structure we will define called a \emph{Confirmation List} to track the responses for a given dequeue locally for each process. Upon receiving a dequeue request message, a given process will either declare that dequeue ”safe” or ”unsafe” if that process is or isn’t in the active process of dequeuing an element. If a process will declare that message safe, it sends a message confirming that to the process that invoked the dequeue, and if it will declare the message unsafe, it sends a message stating that to all processes in the system. Both safe and unsafe messages will be marked with the invoking process, the responding process, and the invoking dequeue vector clock.
+
+Upon hearing about a dequeue request, which are sent globally, a process will instantiate a Confirmation List in it’s local memory, indexed by the timestamp of the invoking processes dequeue. For the dequeue invoking process, the confirmation list will fill by recieving messages from the other processes in the system with a corresponding timestamp. A safe message will be marked as a 1 in the corresponding index of the process in the Confirmation List and an unsafe will be marked as a 2. Once the Confirmation List has no undefined indices, the number of 2’s within the list will be counted, and the queue will be accessed at that index, and the element removed.
+
+For processes that are not the invoking process, only the unsafe messages are received, and marked as 2 in the local Confirmation Lists. To fill the rest of the list, messages with timestamps strictly greater than the invoking timestamp will be treated as implicit ”safe” messages, as there cannot be an unsafe message that has not been received from that process. Thus, with the same number of unsafe messages, the non-invoking processes will naturally come to the same conclusion and remove the same element as the invoking processes.  Confirmation lists, like enqueue requests are sorted by timestamp order, as when they are created, the invoking dequeue timestamp is included. The general structure of a of conf list is as follows [[Flags for responses from a given process][Invoking Process ID][Timestamp of invocation]]
+
+
 %%%%%%%%%%%%%%%
 \subsection{Algorithm}
 
 %%%%%%%%%%%%%%%
 \subsection{Correctness}
+
+
 
 %%%%%%%%%%%%%%%
 \subsection{Complexity}
