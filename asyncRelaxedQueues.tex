@@ -47,6 +47,7 @@
 \maketitle
 
 %%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%
 \section{Introduction}
 
 This paper proposes a new algorithm for implementing a standard FIFO queue in a fully asynchronous message passing mode. To our knowledge we have not encountered any previous work that suggested a queue algorithm for this specific model. Our algorithm utilizes vector clock timestamps that allow individual processes to hold some view of the time steps of other processes have taken at points of communication. Using this technique to timestamp invocations of the two operations of the queue, then linearizing all of the queue invocations based on the ascending lexicographic order of these timestmps creates a valid permutation that meets the specifications of a FIFO Queue.  The goal of establishing this queue method is to design a system with full replication. There are existing systems that handle the asynchronous queue (server client model), but are incapable of replication. With replication, and (INSERT THE CITATION TO THE PAPER HERE) we hope that this queue algorithm can be used in fault tolerant systems in the future.
@@ -54,6 +55,7 @@ This paper proposes a new algorithm for implementing a standard FIFO queue in a 
 %%%%%%%%%%%%%%%
 \subsection{Related Work}
 
+%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Model and Definitions}
 
@@ -75,6 +77,7 @@ We introduce the definition for a standard FIFO Queue abstract data type. We wil
   A sequence of queue operations is legal iff it satisfies the following conditions.  The empty sequence is a legal sequence.  Each Enqueue value is unique. Once a value has been enqueued to the queue once, it can not be enqueued again.  If $\rho$ is a legal sequence of operation instances, then $\rho \cdot Dequeue(-, val), val \neq \bot$ is legal iff Enqueue(val, -) is the first $Enqueue$ instance in $\rho$ that does not already have a matching $Dequeue(-, val)$ in $\rho$. Furthermore, $\rho \cdot Dequeue(-, \bot)$ is legal iff every $Enqueue(val, -)$ in $\rho$ has a matching $Dequeue(-,val)$ in $\rho$.
 \end{definition}
 
+%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Asynchronous FIFO Queues}
 
@@ -100,11 +103,54 @@ For processes that are not the invoking process, only the unsafe messages are re
 %%%%%%%%%%%%%%%
 \subsection{Correctness}
 
+\begin{lemma}
+  Every invocation has a matching response.
+\end{lemma}
 
+\begin{proof}
+Based on teh specifications of the algorithm, if there is an $Enqueue$, the request ffor that is sent globally and responded to.  In teh case of a $Dequeeu$, the request is sent globally, and the response for that $Dequeue$ iss also sent globally.  In all cases of requests being sent, there is a delay of $2d$ , where $d$ is the maximum message delay.
+\end{proof}
+
+\begin{lemma}
+  The local views of the queues are equivalent at the time of $Dequeue$.
+\end{lemma}
+
+\begin{proof}
+  For this algorithm, we will consider the entire history of the execution, such that all elements that were at one point in the queue are considered a part of the prefix of the queue. Once an element is dequeued, that element remains a part of the prefix, but no longer can be accessed, and is marked unavailable for dequeues.
+  
+While processes may have different complete histories for the histories of their enqueues at some point in time, given they may be in different local states with respect to active enqueues that they may have not recieved, the prefix of all local views up to the timestamp of the local execution of a dequeue will be the same. This is due to the fact that there is an agreed upon order for sorting the enqueues, and as such all processes will agree on the order. Furthermore, at the time of a dequeue, we can confirm that a given process will have heard of all prior enqueues. This is due to the fact that in order to locally execute a dequeue, a given process will have to have heard all messages prior to that dequeue, via the Confirmation List structure. The nature of the communication between processes being FIFO results in the knowledge that there cannot have been earlier messages that have gone unrelieved if a later message has been processed and therefore, if a process is actively completing a dequeue invocation, at the point of that invocation every message prior has been received. Thus, we can formally state that at such a point, the prefix of all messages and queue states are equal across all processes.
+\end{proof}
+
+\begin{lemma}
+In order to dequeue an element, there must be a corresponding $Enqueue$.
+\end{lemma}
+
+\begin{proof}
+Proof by contradiction. Assume that some process invokes a dequeue, receives responses and locally executes, removing some element that was not enqueued.  That element, by the algorithm definition, must be held within the local view of the queue. This is because dequeues are accessed via the index provided by the unsafes. Therefore, the element that was dequeued by the process must exist in the local queue. The only way that can occur if the element was enqueued.  Additionally, when removing an element from the queue, it is important to not remove elements with a larger timestamp that the dequeue. In the case in which there is a dequeue request and a timestamp where $dqts < eqts$, and the dequeue executes locally, given we cannot linearize the enq before the deq, we must return $\bot$ and not the element. This behavior is defined in the algorithm (IM LYING ITS NOT WE NEED TO ADD IT :D), and allows us to establish a specified order.
+\end{proof}
+
+\begin{lemma}
+Elements that are dequeued are unique. (No double dequeue.)
+\end{lemma}
+
+\begin{proof}
+Given that at the time of execution we have proved that the head of the list of enqueues, combined with the algorithm definition guaranteeing that the local conf list of all processes contains the same information, we can state that all processes at the time of local execution will act on the same information to select an index, and therefore will select the same index. Given that, we can state that they will remove the same element from the queue, regardless of the time of execution locally.
+\end{proof}
+
+\begin{theorem}
+  Algorithm~\ref{alg:fifo} correctly implements a FIFO queue.
+\end{theorem}
+
+\begin{proof}
+Based on the information of the lemmas, we can conclude that the algorithm definition for the queue follows the specifications for the ADT. Enqeues have corresponding dequeues, no double dequeues, we can linearize by timestamp such that the first element in the queue is always removed first.
+\end{proof}
+
+  
 
 %%%%%%%%%%%%%%%
 \subsection{Complexity}
 
+%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Asynchronous Out-of-Order Queues}
 
@@ -234,9 +280,21 @@ For processes that are not the invoking process, only the unsafe messages are re
 %%%%%%%%%%%%%%%
 \subsection{Correctness}
 
+In the case where $k > n$, since the number of messages required to have a successful dequeue in bounds is less than the number of permitted dequeues ooo, dequeues can be instant. This information is based off of PUT THE PAPER NAME HERE which utilizes prior labeling of elements within the queue structure with a process that is allowed to instantly dequeue it.  Given each element is distinct and can only be dequeued once, the labeling must be distinct, in that each process agrees on the labelling that a given value in the queue receives. Whereas in PAPER NAME AGAIN this is done via a process of synchronization of clocks, we will be adjusting the labelling to occur at points when we can guarantee that the view of distinct processes agree, at the point of dequeueing. As we have discussed, at the point in which a process dequeues, the information prior to that dequeue, the prefix to the execution $\rho$ to that point will be the same for all processes. Given that all processes will agree on a select set of information at the same relative point in their executions, we can treat this as a sort of synchronization, and make decisions as to the labelling of elements at this point.
+
+For this relaxation to still follow the established queue definition, it must only return elements once. Therefore, we must prove that a) Each process dequeues each element only once and b) that elements removed are within the first $n$ elements within the queue.  Given that the labeling is agreed upon by every process, and done by calculations with an invariant, we can state that each process will agree on the elements that are ”fast dequeued” with respect to which process is allowed to ”fast dequeue” them. Given that processes agree which elements are ”reserved” for a fast dequeue by another process, we can furthermore state that a process will not slow dequeue an element that has been marked.
+
+Thus, elements can not be dequeued by processes that they have not been marked for, so we can guarantee that they will ONLY be dequeued by the assigned process.  By thje definition of the algorithm on line GIVE ME THE LINE NUMBER HERE COLE we can also state that the second criterion is satisfied, as at a point where a given process will attempt to fast dequeue, the position of the element that is attempting to be fast dequeued is checked, and the process is only allowed to execute the operation in the case where the element is within the legal bounds for dequeueing.
+
+
+%%%%%%%%%%
+\subsubsection{Less Relaxation than Number of Processes}
+In the case in which the X of out of order is less than the number of processes,there isn’t an order of magnitude benefit to relaxation. The benefit of relaxation is that rather than forcing a wait of 2 times the maximum message delay, the wait can be cut to 2 times the (n-x+1)th slowest message delay. In a close connection system, the benefit is minimal as the difference between the max message delay and the (n-x+1)th is minimal, but in an actualized system with nonstandard message delays, this could have some substantial benefits.
+
 %%%%%%%%%%%%%%%
 \subsection{Complexity}
 
+%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Conclusion}
 
