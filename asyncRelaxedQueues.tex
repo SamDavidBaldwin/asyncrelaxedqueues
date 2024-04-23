@@ -244,11 +244,11 @@ Based on the information of the lemmas, we can conclude that the algorithm defin
           \If {$op == Deq_f$} \Comment{Thought this might be easier to read than wrapping the next block in another nested if}
             \State \Return
           \EndIf
-          \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
 
           \If {$localQueue.peekByLabel(p_{invoker}) \neq \bot$}
           \State let $ret = lQueue.deqByLabel(p_{invoker})$
           \Else 
+            \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
             \State let $ret = lQueue.deqByIndex(pos)$
           \EndIf
           \State $labelElements(p_{invoker})$
