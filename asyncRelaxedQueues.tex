@@ -165,39 +165,30 @@ Based on the information of the lemmas, we can conclude that the algorithm defin
   \begin{algorithmic}[1]
     \Function{Enqueue}{$val$}
       \State $EnqCount = 0$
-      \State $updateTS(v_i)$
-      \State $enq\_timestamp = v_i$
-      \State send $(EnqReq, val, i, enq\_timestamp)$ to all processes
+      \State $incrementTS(v_i)$
+      \State $Enq_{ts} = v_i$
+      \State send $(EnqReq, val, i, Enq_{ts})$ to all processes
     \EndFunction
 
-    \Function{Receive}{$EnqReq, val, j, enq\_timestamp$} from $p_j$
-      \State $updateTS(v_i, v_j)$
-      \If {$enq\_timestamp$ not in Pending\_Enqueues}
-        \State $Pending\_Enqueues.insertByTS(enq\_timestamp, val)$
-      \EndIf
+    \Function{Receive}{$EnqReq, val, j, Enq_{ts}$} from $p_j$
+      \State $updateTS(v_i, Enq_{ts})$
+      \State $lQueue.insertByTS$($val, j, Enq_{ts}$)
+      \For{$confirmationList$ in $PendingDequeues$}
+        \If {$confirmationList.ts \prec Enq_{ts}$}
+          \State $confirmationList.responses[j] = Safe$
+        \EndIf
+      \EndFor
 
       \State send $(EnqAck, i)$ to $p_j$
     \EndFunction
 
-    \Function{Receive}{$EnqAck$ from $p_j$}
+    \Function{Receive}{$EnqAck, j$ from $p_j$}
       \State $EnqCount += 1$
       \If {$EnqCount == n$} 
-        \If {$localQueue.size < k$}
-          \State send $(EnqConfirm, enq\_timestamp)$ to all processes
-        \EndIf
-      \EndIf
-
-      \State \Return $EnqResponse$
-    \EndFunction
-
-    \Function{Receive}{$EnqConfirm, enq\_timestamp$ from $p_j$} 
-      \State $localQueue.insertByTS(Pending\_Enqueues.getByTS(enq\_timestamp))$
-      %\boxit{yellow}{3}
-      \If {$clean == true$ and $localQueue.size() \leq k$} \Comment{localQueues agree by this point}
-        \State let $procNum = (localQueue.size() -1 \mod n$
-        \State $localQueue.label(p_{procNum}, localQueue.tail)$\Comment{I may have mangled this line}
+        \Return $EnqResponse$
       \EndIf
     \EndFunction
+
   \end{algorithmic}
 \end{algorithm}
 
@@ -205,72 +196,66 @@ Based on the information of the lemmas, we can conclude that the algorithm defin
   \caption{Continued, part 2}
   \begin{algorithmic}[1]
     \Function{Dequeue}{}
-      \State $v_i += 1$
+      \State $incrementTS(v_i)$
       \State let $Deq_{ts} = v_i$
-      \If {$localQueue.peekByLabel(p_{i}) \neq \bot$} \Comment{Check that I didn't change this}
+      \If {$localQueue.peekByLabel(p_{i}) \neq \bot$}
         \State let $ret = localQueue.deqByLabel(p_i)$
-        \State send $(Deq_f, ret, Deq_{ts})$ to all processes
+        \State send $(Deq_f, ret, i, Deq_{ts})$ to all processes
       \Else
-        \State send $(Deq_s, null, Deq_{ts})$ to all processes
+        \State send $(Deq_s, null, i, Deq_{ts})$ to all processes
       \EndIf
     \EndFunction
 
-    \Function{Receive}{$deq_f, val, Deq_{ts})$ from $p_j$}
-      \If {$j \neq i$} $localQueue.remove(val)$ \EndIf
-    \EndFunction
-
-    \Function{Receive}{$deq_s, val, Deq_{ts}$ from $p_j$}
+    \Function{Receive}{($op, val, j, Deq_{ts})$ from $p_j$}
       \State $UpdateTs(v_i, Deq_{ts})$
-
+      \State let $p_{invoker} = p_j$
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
-        \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}$)) \Comment{Check line}
+      \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}$))
       \EndIf
-
-      \State let $p_{invoker} = p_j$ \Comment{This doesn't make sense to me? What are you doing on this line?}
-      \If{$Deq_{ts} \neq 0$ and $Deq_{ts} < v_i$}
-        \State send $(Unsafe, Deq_{ts}, i, p_{invoker})$ to all processes
+      \If{$Deq_{ts} \neq 0$ and $Deq_{ts} \prec v_i$}
+        \State let $safetyFlag = Unsafe$
       \Else
-        \State send $(Safe, Deq_{ts}, i, p_{invoker})$ to all processes
+        \State let $safetyFlag = Safe$
       \EndIf
+      \State send $(op, val, safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes
     \EndFunction
+
   \end{algorithmic}
 \end{algorithm}
 
 \begin{algorithm}
   \caption{Continued, part 3}
   \begin{algorithmic}[1]
-    \Function{Receive}{$Safe/Unsafe, Deq_{ts}, j, p_{invoker}$}
+    \Function{Receive}{$(op, val, safetyFlag, Deq_{ts}, i, p_{invoker})$ from $p_j$}
       \If{$Deq_{ts}$ not in $PendingDequeues$}
         \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}))$
       \EndIf
-      \For{$confirmationList$ in $PendingDequeues$}
-        \If{$confirmationList.ts ==  Deq_{ts}$}
-          \If{$\textit{Unsafe}$}
-            \State $response = 2$
-          \Else
-            \State $response = 1$
-          \EndIf
-          \State $confirmationList.list[j] = response$
-        \EndIf
-        \State $propagateEarlierResponses(PendingDequeues)$
-      \EndFor
-
+      \State $propagateEarlierResponses(PendingDequeues)$ 
       \For{($index, confirmationList)$ in $PendingDequeues$}
-        \If{not $confirmationList.contains(0)$ and not $confirmationList.handled$}
-          \State $pos = 0$
-          \For{$response$ in $confirmationList.list$}
-            \If{$response == 2$}
-              \State $pos += 1$
-            \EndIf
-          \EndFor
-          \State $confirmationList.handled = True$
-          \State $updateUnsafes(Lists, index)$
-          \State $ret = localQueue.deqByIndex(pos)$
+      \If{$confirmationList.ts == Deq_{ts}$}
+          \State $confirmationList.responses[j] = safetyFlag$
+        \EndIf 
+        \If{$confirmationList.full()$ and not $confirmationList.handled$}
+          \State $confirmationList.handled = True$ 
+          \If {$op == Deq_f$ and $p_i \neq p_{invoker}$}
+            \State $lQueue.remove(val)$
+          \EndIf 
+          \State $updateUnsafes(PendingDequeues, index)$
+          \If {$op == Deq_f$} \Comment{Thought this might be easier to read than wrapping the next block in another nested if}
+            \State \Return
+          \EndIf
+          \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
+
+          \If {$localQueue.peekByLabel(p_{invoker}) \neq \bot$}
+          \State let $ret = lQueue.deqByLabel(p_{invoker})$
+          \Else 
+            \State let $ret = lQueue.deqByIndex(pos)$
+          \EndIf
           \State $labelElements(p_{invoker})$
-          \If{$i == p_{invoker}$}
+          \If{$p_i == p_{invoker}$}
             \State \Return $ret$
           \EndIf
-        \EndIf \Comment{Not sure I left the nesting right on these.}  
+        \EndIf 
       \EndFor
     \EndFunction
   \end{algorithmic}
