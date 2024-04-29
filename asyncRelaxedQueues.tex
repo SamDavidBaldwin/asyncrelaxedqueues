@@ -207,7 +207,7 @@ Based on the information of the lemmas, we can conclude that the algorithm defin
     \EndFunction
 
     \Function{Receive}{($op, val, j, Deq_{ts})$ from $p_j$}
-      \State $UpdateTs(v_i, Deq_{ts})$
+      \State $updateTs(v_i, Deq_{ts})$
       \State let $p_{invoker} = p_j$
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
       \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}$))
@@ -241,7 +241,7 @@ Based on the information of the lemmas, we can conclude that the algorithm defin
             \State $lQueue.remove(val)$
           \EndIf 
           \State $updateUnsafes(PendingDequeues, index)$
-          \If {$op == Deq_f$} \Comment{Thought this might be easier to read than wrapping the next block in another nested if}
+          \If {$op == Deq_f$}
             \State \Return
           \EndIf
 
@@ -252,6 +252,7 @@ Based on the information of the lemmas, we can conclude that the algorithm defin
             \State let $ret = lQueue.deqByIndex(pos)$
           \EndIf
           \State $labelElements(p_{invoker})$
+          \State $updateUnsafes(PendingDequeues, \textit{index})$
           \If{$p_i == p_{invoker}$}
             \State \Return $ret$
           \EndIf
