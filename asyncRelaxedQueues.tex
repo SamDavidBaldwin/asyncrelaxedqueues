@@ -99,6 +99,92 @@ At the point of the processing of a dequeue via the confirmation list structure,
 %%%%%%%%%%%%%%%
 \subsection{Algorithm}
 
+\begin{algorithm}
+  \caption{Code for each process $p_i$ to implement a Queue with out-of-order k-relaxed \textit{Dequeue}, where $k \geq n$ and $l = [k/n]$}
+  \begin{algorithmic}[1]
+    \Function{Enqueue}{$val$}
+      \State $EnqCount = 0$
+      \State $incrementTS(v_i)$
+      \State $Enq_{ts} = v_i$
+      \State send $(EnqReq, val, i, Enq_{ts})$ to all processes
+    \EndFunction
+
+    \Function{Receive}{$EnqReq, val, j, Enq_{ts}$} from $p_j$
+      \State $updateTS(v_i, Enq_{ts})$
+      \State $lQueue.insertByTS$($val, j, Enq_{ts}$)
+      \For{$confirmationList$ in $PendingDequeues$}
+        \If {$confirmationList.ts \prec Enq_{ts}$}
+          \State $confirmationList.responses[j] = Safe$
+        \EndIf
+      \EndFor
+
+      \State send $(EnqAck, i)$ to $p_j$
+    \EndFunction
+
+    \Function{Receive}{$EnqAck, j$ from $p_j$}
+      \State $EnqCount += 1$
+      \If {$EnqCount == n$} 
+        \Return $EnqResponse$
+      \EndIf
+    \EndFunction
+
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+  \caption{Continued, part 2}
+  \begin{algorithmic}[1]
+    \Function{Dequeue}{}
+      \State $incrementTS(v_i)$
+      \State let $Deq_{ts} = v_i$
+      \State send $(DeqReq, Deq_{ts}, i)$ to all processes
+    \EndFunction
+
+    \Function{Receive}{$(DeqReq, Deq_{ts}, j)$ from $p_j$}
+    \State let $p_{invoker} = p_j$
+      \State let $Deq_{ts} = v_i$
+      \If{$Deq_{ts}$ is not in $PendingDequeues$}
+      \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}$))
+      \EndIf
+      \If{$Deq_{ts} \neq 0$ and $Deq_{ts} \prec v_i$}
+        \State let $safetyFlag = Unsafe$
+      \Else
+        \State let $safetyFlag = Safe$
+      \EndIf
+      \State send $(safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes
+    \EndFunction
+
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+  \caption{Continued, part 3}
+  \begin{algorithmic}[1]
+    \Function{Receive}{$(safetyFlag, Deq_{ts}, i, p_{invoker})$ from $p_j$}
+      \If{$Deq_{ts}$ not in $PendingDequeues$}
+        \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}))$
+      \EndIf
+      \State $propagateEarlierResponses(PendingDequeues)$ 
+      \For{($index, confirmationList)$ in $PendingDequeues$}
+      \If{$confirmationList.ts == Deq_{ts}$}
+          \State $confirmationList.responses[j] = safetyFlag$
+        \EndIf 
+        \If{$confirmationList.full()$ and not $confirmationList.handled$}
+          \State $confirmationList.handled = True$ 
+
+          \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
+          \State let $ret = lQueue.deqByIndex(pos)$
+          \State $updateUnsafes(PendingDequeues, \textit{index})$
+          \If{$p_i == p_{invoker}$}
+            \State \Return $ret$
+          \EndIf
+        \EndIf 
+      \EndFor
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+
 %%%%%%%%%%%%%%%
 \subsection{Correctness}
 In order to prove that this algorithm alligns with the Queue specification set forth, we will consider an arbitrary admissable run of invocations denoted R. We construct $\pi$, a permutation of all operation instances in R, by ordering operations in ascending order based on their lexicographic vector timestamp values. 
@@ -252,7 +338,6 @@ The process of labeling is done by guaranteeing that processes have the same vie
           \If {$op == Deq_f$ and $p_i \neq p_{invoker}$}
             \State $lQueue.remove(val)$
           \EndIf 
-          \State $updateUnsafes(PendingDequeues, index)$
           \If {$op == Deq_f$}
             \State \Return
           \EndIf
