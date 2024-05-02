@@ -1,0 +1,9 @@
+asyncRelaxedQueues.pdf
+*.aux
+*.log
+*.md
+*.blg
+*.bbl
+*.vtc
+*~
+#*
