@@ -100,7 +100,7 @@ At the point of the processing of a dequeue via the confirmation list structure,
 \subsection{Algorithm}
 
 \begin{algorithm}
-  \caption{Code for each process $p_i$ to implement a Queue with out-of-order k-relaxed \textit{Dequeue}, where $k \geq n$ and $l = [k/n]$}
+  \caption{Code for each process $p_i$ to implement a Queue}
   \begin{algorithmic}[1]
     \Function{Enqueue}{$val$}
       \State $EnqCount = 0$
@@ -180,6 +180,40 @@ At the point of the processing of a dequeue via the confirmation list structure,
           \EndIf
         \EndIf 
       \EndFor
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+  \caption{Helper functions}
+  \begin{algorithmic}[1]
+    \Function{propagateEarlierResponses}{$PendingDequeues$}
+    \For{$row$ from $len(PendingDequeues) - 1$ down to $1$}
+    \For{$col$ from $0$ to $n$}
+    \State let $response = PendingDequeues[row].responses[col]$ 
+    \If{$response \neq 0$ and $PendingDequeues[row-1].responses[col] == 0$}
+    \State $PendingDequeues[row-1].responses[col] = response$
+    \EndIf
+    \EndFor
+    \EndFor
+    \EndFunction
+    \Function{updateUnsafes}{$PendingDequeues, startIndex$}
+      \State let $invoker = PendingDequeues[startIndex].invoker$
+      \For{$index = startIndex$ upto $n$}
+      \State $PendingDequeues[index].responses[invoker] = 1$  
+      \EndFor
+    \EndFunction
+    \Function{updateTs}{$v_i, v_j$}
+      \For{$i = 0$ upto $n - 1$}
+      \State $v_i[i] = v_j[i]$ if $v_j[i] > v_i[i]$
+      \EndFor
+    \EndFunction
+    \Function{createList}{$Deq_{ts}, p_{invoker}$}
+    \State $ConfirmationList.responses = [0,0,...,0]$ \Comment{A list of $n$ 0s}
+    \State $ConfirmationList.ts = Deq_{ts}$ \Comment{A vector clock timestamp}
+    \State $ConfirmationList.handled = False$ \Comment{True once removed}
+    \State $ConfirmationList.invoker = p_{invoker}$ \Comment{The invoking process of the Dequeue}
+    \State \Return $ConfirmationList$
     \EndFunction
   \end{algorithmic}
 \end{algorithm}
