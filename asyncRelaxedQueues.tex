@@ -8,19 +8,40 @@
 
 \titlerunning{Asynchronous Relaxed Queues}
 
-\author{Samuel Baldwin}{Bucknell University, USA}{}{https://orcid.org/0000-0002-1825-0097}{}
+\author{Samuel Baldwin}{Bucknell University, USA}{}{orcid}{}
 
 \author{Cole Hausman}{Bucknell University, USA}{}{[orcid]}{}
 
 \author{Mohamed Bakr}{Bucknell University, USA}{}{ORCID}{}
 
-\author{Edward Talmage}{Bucknell Univserity, USA}{elt006@bucknell.edu}{ORCID}{}
+\author{Edward Talmage}{Bucknell Univserity, USA}{elt006@bucknell.edu}{https://orcid.org/0009-0001-9108-6190}{}
 
 \authorrunning{S. Baldwin, C. Hausman, M. Bakr, E. Talmage} %TODO mandatory. First: Use abbreviated first/middle names. Second (only in severe cases): Use first author plus 'et al.'
 
 \Copyright{Samuel Baldwin, Cole Hausman, Mohamed Bakr, Edward Talmage} 
 
-\ccsdesc[100]{\textcolor{red}{Replace ccsdesc macro with valid one}} %TODO mandatory: Please choose ACM 2012 classifications from https://dl.acm.org/ccs/ccs_flat.cfm 
+\begin{CCSXML}
+  <ccs2012>
+   <concept>
+       <concept_id>10003752.10003809.10010172</concept_id>
+       <concept_desc>Theory of computation~Distributed algorithms</concept_desc>
+       <concept_significance>500</concept_significance>
+   </concept>
+   <concept>
+       <concept_id>10003752.10003809.10010031</concept_id>
+       <concept_desc>Theory of computation~Data structures design and analysis</concept_desc>
+       <concept_significance>500</concept_significance>
+   </concept>
+   <concept>
+       <concept_id>10010147.10010919.10010172</concept_id>
+       <concept_desc>Computing methodologies~Distributed algorithms</concept_desc>
+       <concept_significance>500</concept_significance>
+   </concept>
+   </ccs2012>
+\end{CCSXML}
+\ccsdesc[500]{Theory of computation~Distributed algorithms}
+\ccsdesc[500]{Theory of computation~Data structures design and analysis}
+\ccsdesc[500]{Computing methodologies~Distributed algorithms} %Please choose ACM 2012 classifications from https://dl.acm.org/ccs/ccs_flat.cfm 
 
 \keywords{Distributed Data Structures, Asynchronous Algorithms, Relaxed Data Types} %TODO mandatory; please add comma-separated list of keywords
 
@@ -42,13 +63,20 @@
 \ArticleNo{23}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
 \begin{document}
 \maketitle
+
+\begin{abstract}
+We explore the problem of efficiently implementing shared data structures in an asynchronous computing environment.  We start with a traditional FIFO queue, showing that full replication is possible with a delay of only only two round-trip messages between invocation and response of each operation.  We argue that this is optimal, since any shorter delay would allow scenarios where an algorithm cannot determine correct return values.  We then turn our attention to improving performace.  Here, though we cannot improve the worst-case time per operation instance, we show that \emph{relaxation}, weakening the ordering guarantees of the Queue data type, allows most $Dequeue$ instances to return more quickly than the worst-case, giving a low amortized cost per instance.
+\end{abstract}
 
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Introduction}
+
+Distributed data structures are a fundamental construct for computing to spread across different machines which need to work together.  By specifying the interface which dta operations may use and the exact effects of those operations, we provide an abstraction layer that allows a distributed programmer to not worry about the details of coordinating and maintaining data, instead focusing on the particular application in which they are interested.  We, in building that abstraction layer, must consider all the possible oddities of concurrency, messages, delays, and different views.  We can thus focus on optimizing our algorithm, and provide the developer with an efficient tool which provides well-specified guarantees.
+
+We consider the problem of building such distributed data structures in such a way as to minimize the delay users experience.  Past work has given tight or nearly tight bounds on the possible implementations of a variety of data structures \cite{Kosa99,WangTalmageLeeWelch18} in partially synchronous systems, were there are bounds on the real time which messages between participating processes may take to arrive and processes know and can depend on those bounds.  However, real-world systems do not generally have reliable bounds on timings, so these algorithms are difficult to implement
 
 This paper proposes a new algorithm for implementing a standard FIFO queue in a fully asynchronous message passing mode. While there exists existing solutions for queues in this model, none offer full replication, and therefore the ability to extend to fault tolerant systems. Our algorithm utilizes vector clock timestamps that allow individual processes to hold some view of the time steps of other processes have taken at points of communication. Using this technique to timestamp invocations of the two operations of the queue, then linearizing all of the queue invocations based on the ascending lexicographic order of these timestmps creates a valid permutation that meets the specifications of a FIFO Queue.  The goal of establishing this queue method is to design a system with full replication. There are existing systems that handle the asynchronous queue (server client model), but are incapable of replication. With replication, and (INSERT THE CITATION TO THE PAPER HERE) we hope that this queue algorithm can be used in fault tolerant systems in the future.
 
@@ -61,20 +89,22 @@ This paper proposes a new algorithm for implementing a standard FIFO queue in a 
 
 %%%%%%%%%%%%%%%
 \subsection{Asynchronous System Model}
-We assume a fully asynchronous message passing model, with a set of $n$ processes $\Pi = [p_0, \dots , p_{n-1}]$ modeled as state machines. These state machines are time-free, meaning that their output is only described through their input and state transitions without any specific time bound. All inter-process communication is assumed to be reliable i.e any message that is sent will always be received at it’s destination process.  Additionally, communication channels between processes are considered to be treated as FIFO, in that any message sent from process $A$ to process $B$ will be processed prior to any other message from the same pair sent later in an execution. This is accomplished by establishing a buffer for incoming messages for each process, and that when messages are sent, they are explicitly marked in the order they are sent. Out of order messages are stored in the buffer until they can be retrieved in order.  We also assume no processes crash, and none of the processes have access to a hardware clock.
+We assume a fully asynchronous message passing model, with a set of $n$ processes $\Pi = [p_0, \dots , p_{n-1}]$ modeled as state machines.  These state machines are time-free, meaning that their output is only described through their input and state transitions without any specific time bound.  
+
+All inter-process communication is assumed to be reliable, so any message a process sends will eventually be received at its destination process.  Additionally, communication channels between processes are considered to be treated as FIFO, in that any message sent from process $A$ to process $B$ will be processed prior to any other message from the same pair sent later in an execution. This is accomplished by establishing a buffer for incoming messages for each process, and that when messages are sent, they are explicitly marked in the order they are sent. Out of order messages are stored in the buffer until they can be retrieved in order.  We also assume no processes crash, and none of the processes have access to a hardware clock.
 
 %%%%%%%%%%%%%%%
 \subsection{Queue Definitions}
 
-We introduce the definition for a standard FIFO Queue abstract data type. We will use the special character $\bot$ to represent an empty queue.
+We introduce the definition for a standard FIFO Queue abstract data type. We will use the special character $\bot$ to represent an empty queue.    To simplify the statement of our definition, we assume that each argument to $Enqueue$ is unique. This can easily be achieved by a simple abstraction layer that adds a timestamp to each value before it is passed to the data structure.  We also define the notion of \emph{matching}: A $Dequeue$ instances matches an $Enqueue$ instance if it returns that $Enqueue$'s (unique) argument.  
 
 \begin{definition} A \emph{Queue} over a set of values V is a data type with two operations:
   \begin{itemize}
-  \item $Enqueue(val,-)$ adds the value X to the queue
+  \item $Enqueue(val,-)$ adds the value X to the queue.
   \item $Dequeue(-, val)$ returns the oldest value in the queue.
   \end{itemize}
 
-  A sequence of queue operations is legal iff it satisfies the following conditions.  The empty sequence is a legal sequence.  Each Enqueue value is unique. Once a value has been enqueued to the queue once, it can not be enqueued again.  If $\rho$ is a legal sequence of operation instances, then $\rho \cdot Dequeue(-, val), val \neq \bot$ is legal iff Enqueue(val, -) is the first $Enqueue$ instance in $\rho$ that does not already have a matching $Dequeue(-, val)$ in $\rho$. Furthermore, $\rho \cdot Dequeue(-, \bot)$ is legal iff every $Enqueue(val, -)$ in $\rho$ has a matching $Dequeue(-,val)$ in $\rho$.
+  A sequence of queue operations is legal iff it satisfies the following conditions.  The empty sequence is a legal sequence.  If $\rho$ is a legal sequence of operation instances, then $\rho \cdot Dequeue(-, val), val \neq \bot$ is legal iff $Enqueue(val, -)$ is the first $Enqueue$ instance in $\rho$ that does not already have a matching $Dequeue(-, val)$ in $\rho$. Furthermore, $\rho \cdot Dequeue(-, \bot)$ is legal iff every $Enqueue(val, -)$ in $\rho$ has a matching $Dequeue(-,val)$ in $\rho$.
 \end{definition}
 
 %%%%%%%%%%%%%%%
