@@ -1,6 +1,8 @@
 \documentclass[a4paper,USenglish]{lipics-v2021} % TODO: Re-add anonymous tag
 
 \usepackage{algorithm,algpseudocode}
+\algtext*{EndIf}
+\algtext*{EndFor}
 
 \bibliographystyle{plainurl}% the mandatory bibstyle
 
@@ -130,7 +132,7 @@ At the point of the processing of a dequeue via the confirmation list structure,
 \subsection{Algorithm}
 
 \begin{algorithm}
-  \caption{Code for each process $p_i$ to implement a Queue}
+  \caption{Code for each process $p_i$ to implement a Queue, Handlers for $Enqueue$}\label{alg:fifo}
   \begin{algorithmic}[1]
     \Function{Enqueue}{$val$}
       \State $EnqCount = 0$
@@ -157,13 +159,16 @@ At the point of the processing of a dequeue via the confirmation list structure,
         \Return $EnqResponse$
       \EndIf
     \EndFunction
-
+    \Statex
+    \Statex \emph{(continues below)}
+    \algstore{fifoLines}
   \end{algorithmic}
 \end{algorithm}
 
 \begin{algorithm}
-  \caption{Continued, part 2}
+  \caption{Algorithm~\ref{alg:fifo} continued: Handlers for $Dequeue$}
   \begin{algorithmic}[1]
+    \algrestore{fifoLines}
     \Function{Dequeue}{}
       \State $incrementTS(v_i)$
       \State let $Deq_{ts} = v_i$
@@ -184,12 +189,6 @@ At the point of the processing of a dequeue via the confirmation list structure,
       \State send $(safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes
     \EndFunction
 
-  \end{algorithmic}
-\end{algorithm}
-
-\begin{algorithm}
-  \caption{Continued, part 3}
-  \begin{algorithmic}[1]
     \Function{Receive}{$(safetyFlag, Deq_{ts}, i, p_{invoker})$ from $p_j$}
       \If{$Deq_{ts}$ not in $PendingDequeues$}
         \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}))$
@@ -210,13 +209,19 @@ At the point of the processing of a dequeue via the confirmation list structure,
           \EndIf
         \EndIf 
       \EndFor
-    \EndFunction
+      \EndFunction
+      \Statex
+      \Statex \emph{(continues below)}
+
+    \algstore{fifoLines}  
   \end{algorithmic}
 \end{algorithm}
 
 \begin{algorithm}
-  \caption{Helper functions}
+  \caption{Algorithm~\ref{alg:fifo} continued: Helper functions}
   \begin{algorithmic}[1]
+    \algrestore{fifoLines}
+    
     \Function{propagateEarlierResponses}{$PendingDequeues$}
     \For{$row$ from $len(PendingDequeues) - 1$ down to $1$}
     \For{$col$ from $0$ to $n$}
@@ -323,7 +328,7 @@ The process of labeling is done by guaranteeing that processes have the same vie
 \subsection{Algorithm}
 
 \begin{algorithm}
-  \caption{Code for each process $p_i$ to implement a Queue with out-of-order k-relaxed \textit{Dequeue}, where $k \geq n$ and $l = [k/n]$}
+  \caption{Code for each process $p_i$ to implement a Queue with out-of-order k-relaxed \textit{Dequeue}, where $k \geq n$: Handlers for $Enqueue$}\label{alg:relaxed}
   \begin{algorithmic}[1]
     \Function{Enqueue}{$val$}
       \State $EnqCount = 0$
@@ -350,13 +355,16 @@ The process of labeling is done by guaranteeing that processes have the same vie
         \Return $EnqResponse$
       \EndIf
     \EndFunction
-
+    \Statex
+    \Statex \emph{(continues below)}
+    \algstore{relaxedLines}
   \end{algorithmic}
 \end{algorithm}
 
 \begin{algorithm}
-  \caption{Continued, part 2}
+  \caption{Algorithm~\ref{alg:relaxed} continued: Handlers for $Dequeue$}
   \begin{algorithmic}[1]
+    \algrestore{relaxedLines}
     \Function{Dequeue}{}
       \State $incrementTS(v_i)$
       \State let $Deq_{ts} = v_i$
@@ -382,12 +390,6 @@ The process of labeling is done by guaranteeing that processes have the same vie
       \State send $(op, val, safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes
     \EndFunction
 
-  \end{algorithmic}
-\end{algorithm}
-
-\begin{algorithm}
-  \caption{Continued, part 3}
-  \begin{algorithmic}[1]
     \Function{Receive}{$(op, val, safetyFlag, Deq_{ts}, i, p_{invoker})$ from $p_j$}
       \If{$Deq_{ts}$ not in $PendingDequeues$}
         \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}))$
