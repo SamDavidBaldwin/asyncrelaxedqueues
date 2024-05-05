@@ -93,31 +93,60 @@ Another intriguing property of relaxed queues is that they are not as subject to
 %%%%%%%%%%%%%%%
 \subsection{Related Work}
 
+TODO
+
+% Lamport: Linearizability, data structure implementations
+% ABD: Register implementations in asynchronous systems
+
+% Relaxation:
+% Afek et al. Quasi-linearizability
+% Henzinger et al. Quantitative relaxation
+% Talmage Welch '14 improving data structure performance
+
+% Computational power
+% FLP, Herlihy
+% Shavit Taubenfeld/TalmageWelch19: lower CNs for relaxed queues
+
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Model and Definitions}
 
 %%%%%%%%%%%%%%%
 \subsection{Asynchronous System Model}
-We assume a fully asynchronous message passing model of computation.  The system contains a set of $n$ processes $\Pi = [p_0, \dots , p_{n-1}]$ modeled as state machines, and a set of $n$ users, one for each process.  Each state machine accepts two types of inputs: the corresponding user may \emph{invoke} an operation, or the machine may \emph{receive} a message.  Each of these will trigger a handler.  Each process, in its handlers, may perform local computation, or perform one of of two external actions: it may \emph{respond} to its user or \emph{send} a message to another process.  The state machines are time-free, meaning that their output is only described through their input and state transitions without any specific time bound.
+We assume a fully asynchronous message passing model of computation.  The system contains a set of $n$ processes $\Pi = [p_0, \dots , p_{n-1}]$ modeled as state machines, and a set of $n$ users, one for each process.  Each state machine accepts two types of inputs: the corresponding user may \emph{invoke} an operation, or the machine may \emph{receive} a message.  Each of these will trigger a handler.  Each process, in its handlers, may perform local computation, or perform one of of two external actions: it may \emph{respond} to its user or \emph{send} a message to another process.  The state machines are time-free, meaning that their output is only described through their input and state transitions without any specific time bound.  We also assume no processes fail, instead performing exactly as per the state machine specification.  
 
-We assume all inter-process communication is reliable, so when a process sends a message, that message will eventually be received at its destination process exactly once.  Additionally, we assume communication channels between processes are First-In, First-Out.  That is, if process $p_i$ sends message $m_1$ to process $p_j$, then sends message $m_2$ also to $p_j$, then $p_j$ will receive $m_1$ before it receives $m_2$.  This assumption does not reduce the generality of our results, as we can implement such an ordering guarantee by attaching a sequence number to each message and buffering incoming messages at each process.  We store out of order messages this buffer until all previous messages are received, then the receiving process receives the buffered message.
+We assume all inter-process communication is reliable, so when a process sends a message, that message will eventually be received at its destination process exactly once.  Additionally, we assume communication channels between processes are First-In, First-Out.  That is, if process $p_i$ sends message $m_1$ to process $p_j$, then sends message $m_2$ also to $p_j$, then $p_j$ will receive $m_1$ before it receives $m_2$.  This assumption does not reduce the generality of our results, as we can implement such an ordering guarantee by attaching a sequence number to each message and buffering incoming messages at each process.  We store out of order messages in this buffer until all previous messages are received, then receive the buffered message.
 
-We also assume no processes fail, instead performing exactly as per the state machine specification.  
+While there is no notion of time available to processes in the system, we establish a notion of the time cost of our algorithms by considering that they run in real time.  There are no upper or lower bounds on either local computation time or the time between when a message is sent and received.  However, we can measure an algorithmic time, from outside the system, by expressing it in terms of the number of sequential messages which must occur in that duration \cite{AttiyaWelch04}.  That is, in a particular run, we define the parameter $d$ as the real time duration of the longest time between sending and receiving any one message.  We express algorithmic time in terms of $d$, by considering how many messages the algorithm sends and receives, with each send necessarily occurring after the receive of the previous message.  Since each of those delays may be the largest in that run, this gives a measure of algorithmic runtime without bounding real time message delays.  
 
 %%%%%%%%%%%%%%%
-\subsection{Queue Definitions}
+\subsection{Data Type Definitions}
 
-We introduce the definition for a standard FIFO Queue abstract data type. We will use the special character $\bot$ to represent an empty queue.    To simplify the statement of our definition, we assume that each argument to $Enqueue$ is unique. This can easily be achieved by a simple abstraction layer that adds a timestamp to each value before it is passed to the data structure.  We also define the notion of \emph{matching}: A $Dequeue$ instances matches an $Enqueue$ instance if it returns that $Enqueue$'s (unique) argument.  
+We first state the definition for a standard FIFO queue abstract data type, then that for the relaxed queue we study here.  We state abstract date type (ADT) specifications in two parts: First, a list of operations the user can invoke, with argument and return types, expressed as $OP(arg,ret)$.  We use $-$ to indicate when a function takes no argument or returns no value.  Second, we define the set of legal \emph{instances} of these operations.  An operation instance is an invocation-response pair, noting that these are significantly separate events in a distributed setting.  We assume that each process' user cannot invoke an operation until it has received a response to its last previous invocation.   
+
+To simplify the statement of our definitions, we assume that each argument to $Enqueue$ is unique.  One way to achieve this practically would be a simple abstraction layer that adds a (logical) timestamp to each value before it is passed to the data structure.  We also define the notion of \emph{matching}: A $Dequeue$ instances matches an $Enqueue$ instance if it returns that $Enqueue$'s (unique) argument.  We will use the special character $\bot$ to represent an empty queue.
 
 \begin{definition} A \emph{Queue} over a set of values V is a data type with two operations:
   \begin{itemize}
-  \item $Enqueue(val,-)$ adds the value X to the queue.
-  \item $Dequeue(-, val)$ returns the oldest value in the queue.
+  \item $Enqueue(val,-), val \in V$ 
+  \item $Dequeue(-, val), val \in V \cup \{\bot\}$ 
+  \end{itemize}
+  
+  The empty sequence is legal.  For any legal sequence $\rho$ of instances of queue operations and $val \in V$, (1) $\rho \cdot Enqueue(val,-)$ is legal, (2) $\rho \cdot Dequeue(-,val)$ is legal iff $Enqueue(val, -)$ is the first unmatched $Enqueue$ instance in $\rho$, and (3) $\rho \cdot Dequeue(-, \bot)$ is legal iff every $Enqueue(val, -)$ in $\rho$ is matched.
+\end{definition}
+
+We can now formally define the relaxed queue we implement in this paper.  Intuitively, each $Dequeue$ instance can return one of the $k$ oldest elements in the queue.  If $k=1$, this is the same as the FIFO Queue defined above.
+
+\begin{definition} A \emph{Queue with $k$-Out-of-Order relaxed $Dequeue$}, or an \emph{$k$-Out-of-Order Queue}, over a set of values $V$ is a data type with two operations:
+  \begin{itemize}
+  \item $Enqueue(val,-), val \in V$
+  \item $Dequeue(-,val), val \in V$
   \end{itemize}
 
-  A sequence of queue operations is legal iff it satisfies the following conditions.  The empty sequence is a legal sequence.  If $\rho$ is a legal sequence of operation instances, then $\rho \cdot Dequeue(-, val), val \neq \bot$ is legal iff $Enqueue(val, -)$ is the first $Enqueue$ instance in $\rho$ that does not already have a matching $Dequeue(-, val)$ in $\rho$. Furthermore, $\rho \cdot Dequeue(-, \bot)$ is legal iff every $Enqueue(val, -)$ in $\rho$ has a matching $Dequeue(-,val)$ in $\rho$.
+  The empty sequence is legal.  For any legal sequence $\rho$ of instances of $k$-out-of-order queue operations and $val \in V$, (1) $\rho \cdot Enqueue(val,-)$ is legal, (2) $\rho \cdot Dequeue(-,val)$ is legal iff $val$ is the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho$, and (3) $\rho \cdot Dequeue(-,\bot)$ is legal iff there are fewer than $k$ unmatched $Enqueue$ instances in $\rho$.
 \end{definition}
+
+We are interested in implementations which satisfy \emph{linearizability} \cite{HerlihyWing90}.  Linearizability is a consistency condition which describes how concurrent executions of a data structure relate to the sequential specification of the ADT the structure implements.  Specifically, linearizability requires that operation response values be such that there is a total order of all operation instances in the execution which is legal according to the ADT and which respects the real-time order of instances which do not overlap in real time.  That is, if one instance returns before, in real time, another's invocation, that one which returned first must be ordered first.  This condition provides behavior that matches that we intuitively expect systems to have, disallowing inversions in real time.  Linearizability also has the advantage of being composable, meaning that running multiple linearizable objects in the same execution will necessarily produce an overall linearizable execution.  Linearizability is the strongest consistency condition we might satisfy, so our upper bounds translate to any other consistency condition one might use.  
 
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
