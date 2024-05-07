@@ -4,6 +4,9 @@
 \algtext*{EndIf}
 \algtext*{EndFor}
 
+\newcommand{\red}[1]{\textcolor{red}{#1}} % TODO: Delete this before submission
+\newcommand{\pluseq}{\mathrel{+}=}
+
 \bibliographystyle{plainurl}% the mandatory bibstyle
 
 \title{Relaxation for Efficient Asynchronous Queues}
@@ -183,10 +186,10 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
   \caption{Code for each process $p_i$ to implement a Queue, Handlers for $Enqueue$}\label{alg:fifo}
   \begin{algorithmic}[1]
     \Function{Enqueue}{$val$}
-      \State $EnqCount = 0$
-      \State $incrementTS(v_i)$
-      \State $Enq_{ts} = v_i$
-      \State send $(EnqReq, val, i, Enq_{ts})$ to all processes
+      \State $EnqCount = 0$ \Comment{\red{What is this for? Is it a response counter?  Maybe rename.}}
+      \State $incrementTS(v_i)$ \Comment{\red{Is there any reason to pass my own timestamp, instead of just relying on having access to it in the helper?}}
+      \State $Enq_{ts} = v_i$ \Comment{\red{For compactness, maybe have incrementTS() return the new vector, so we can combine with previous line?}}
+      \State send $(EnqReq, val, i, Enq_{ts})$ to all processes \Comment{\red{Switch $i$, $End_{ts}$ for consistency with Dequeue}}
     \EndFunction
 
     \Function{Receive}{$EnqReq, val, j, Enq_{ts}$} from $p_j$
@@ -194,7 +197,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \State $lQueue.insertByTS$($val, j, Enq_{ts}$)
       \For{$confirmationList$ in $PendingDequeues$}
         \If {$confirmationList.ts \prec Enq_{ts}$}
-          \State $confirmationList.responses[j] = Safe$
+          \State $confirmationList.responses[j] = Safe$ \Comment{\red{Please confirm that this is still valid, even with broadcast safes.}}
         \EndIf
       \EndFor
 
@@ -202,9 +205,9 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
     \EndFunction
 
     \Function{Receive}{$EnqAck, j$ from $p_j$}
-      \State $EnqCount += 1$
+      \State $EnqCount \pluseq 1$
       \If {$EnqCount == n$} 
-        \Return $EnqResponse$
+        \Return $EnqResponse$ to user
       \EndIf
     \EndFunction
     \Statex
@@ -218,18 +221,18 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
   \begin{algorithmic}[1]
     \algrestore{fifoLines}
     \Function{Dequeue}{}
-      \State $incrementTS(v_i)$
+      \State $incrementTS(v_i)$ \Comment{\red{Same questions as in Enqueue.}}
       \State let $Deq_{ts} = v_i$
       \State send $(DeqReq, Deq_{ts}, i)$ to all processes
     \EndFunction
 
     \Function{Receive}{$(DeqReq, Deq_{ts}, j)$ from $p_j$}
-    \State let $p_{invoker} = p_j$
-      \State let $Deq_{ts} = v_i$
+    \State let $p_{invoker} = p_j$ \Comment{\red{We're just renaming, right?  How about we just name it $p_{inv}$ or similar in the function header?}}
+      \State let $Deq_{ts} = v_i$ \Comment{\red{This doesn't look right to me.  The $Deq_{ts}$ is what we got in the message, right? I think we can delete this line.}}
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
       \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}$))
       \EndIf
-      \If{$Deq_{ts} \neq 0$ and $Deq_{ts} \prec v_i$}
+      \If{$Deq_{ts} \neq 0$ and $Deq_{ts} \prec v_i$} \Comment{\red{We should be comparing the recieved ts ($Deq_{ts}$) with the ts of our own pending dequeue, which we don't seem to be storing anywhere.}}
         \State let $safetyFlag = Unsafe$
       \Else
         \State let $safetyFlag = Safe$
@@ -242,19 +245,16 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
         \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}))$
       \EndIf
       \State $propagateEarlierResponses(PendingDequeues)$ 
-      \For{($index, confirmationList)$ in $PendingDequeues$}
+      \For{($index, confirmationList)$ in $PendingDequeues$} \Comment{Add this response to confirmation list; locally execute any $Dequeue$ instances with all responses.} %TODO: This comment is too wordy, but the loop is somewhat confusing since it's doing two things.  Perhaps just describe carefully above.
       \If{$confirmationList.ts == Deq_{ts}$}
           \State $confirmationList.responses[j] = safetyFlag$
         \EndIf 
         \If{$confirmationList.full()$ and not $confirmationList.handled$}
-          \State $confirmationList.handled = True$ 
-
+          \State $confirmationList.handled = True$ \Comment{\red{Why would a handled Dequeue still be in confirmationLists?  Once we handle it, can't we remove it?}}
           \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
           \State let $ret = lQueue.deqByIndex(pos)$
-          \State $updateUnsafes(PendingDequeues, \textit{index})$
-          \If{$p_i == p_{invoker}$}
-            \State \Return $ret$
-          \EndIf
+          \State $updateUnsafes(PendingDequeues, index)$
+          \If{$p_i == p_{invoker}$} \Return $ret$ to user \EndIf \Comment{\red{I think this shouldn't be $p_{invoker}$ from the message receipt, this should be the invoking process of the dequeue instance from confLists we're locally executing.}}
         \EndIf 
       \EndFor
       \EndFunction
@@ -271,11 +271,11 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
     \algrestore{fifoLines}
     
     \Function{propagateEarlierResponses}{$PendingDequeues$}
-    \For{$row$ from $len(PendingDequeues) - 1$ down to $1$}
-    \For{$col$ from $0$ to $n$}
+    \For{$row$ from $len(PendingDequeues) - 1$ down to $1$} \Comment{\red{May need a more descriptive way to talk about iteration order.  These are sorted by timestamp, so are we moving in order of increasing or decreasing timestamp?}}
+    \For{$col$ from $0$ to $n$} \Comment{\red{n-1?}}
     \State let $response = PendingDequeues[row].responses[col]$ 
-    \If{$response \neq 0$ and $PendingDequeues[row-1].responses[col] == 0$}
-    \State $PendingDequeues[row-1].responses[col] = response$
+    \If{$response \neq 0$ and $PendingDequeues[row-1].responses[col] == 0$} \Comment{\red{TODO: Update to use $safe$/$unsafe$/empty}}
+    \State $PendingDequeues[row-1].responses[col] = response$ 
     \EndIf
     \EndFor
     \EndFor
@@ -292,7 +292,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \EndFor
     \EndFunction
     \Function{createList}{$Deq_{ts}, p_{invoker}$}
-    \State $ConfirmationList.responses = [0,0,...,0]$ \Comment{A list of $n$ 0s}
+    \State $ConfirmationList.responses = [0,0,...,0]$ \Comment{A list of $n$ 0s} \Comment{\red{Is $ConfirmationList$ defined?  Because it looks like we're setting attributes of an object we haven't initialized.  I get that this is basically a constructor, but maybe we can make this more straightforward?}}
     \State $ConfirmationList.ts = Deq_{ts}$ \Comment{A vector clock timestamp}
     \State $ConfirmationList.handled = False$ \Comment{True once removed}
     \State $ConfirmationList.invoker = p_{invoker}$ \Comment{The invoking process of the Dequeue}
@@ -378,6 +378,8 @@ The process of labeling is done by guaranteeing that processes have the same vie
 \begin{algorithm}
   \caption{Code for each process $p_i$ to implement a Queue with out-of-order k-relaxed \textit{Dequeue}, where $k \geq n$: Handlers for $Enqueue$}\label{alg:relaxed}
   \begin{algorithmic}[1]
+    \Statex \Comment{\red{Is this entirely the same as for unrelaxed queues? I know I said to keep it, but I'm second-guessing whether we should include it if it's in a separate algorithm block and completely unchanged.}
+}
     \Function{Enqueue}{$val$}
       \State $EnqCount = 0$
       \State $incrementTS(v_i)$
@@ -398,7 +400,7 @@ The process of labeling is done by guaranteeing that processes have the same vie
     \EndFunction
 
     \Function{Receive}{$EnqAck, j$ from $p_j$}
-      \State $EnqCount += 1$
+      \State $EnqCount \pluseq 1$
       \If {$EnqCount == n$} 
         \Return $EnqResponse$
       \EndIf
@@ -419,18 +421,20 @@ The process of labeling is done by guaranteeing that processes have the same vie
       \If {$localQueue.peekByLabel(p_{i}) \neq \bot$}
         \State let $ret = localQueue.deqByLabel(p_i)$
         \State send $(Deq_f, ret, i, Deq_{ts})$ to all processes
+        \State \Comment{\red{Don't we need to be returning to the user here?  Or does that happen after one round trip?}}
+        \Statex \Comment{\red{Can't be here, as 0-duration op instances don't linearize.  But as written, our fast dequeues are no faster than slow dequeues, just choosing their return value sooner.}}
       \Else
         \State send $(Deq_s, null, i, Deq_{ts})$ to all processes
       \EndIf
     \EndFunction
 
     \Function{Receive}{($op, val, j, Deq_{ts})$ from $p_j$}
-      \State $updateTs(v_i, Deq_{ts})$
-      \State let $p_{invoker} = p_j$
+      \State $updateTS(v_i, Deq_{ts})$
+      \State let $p_{invoker} = p_j$  \Comment{\red{As above, this seems extraneous.}}
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
-      \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}$))
+      \State $PendingDequeues.insertByTS(createList(Deq_{ts}, p_{invoker}$))
       \EndIf
-      \If{$Deq_{ts} \neq 0$ and $Deq_{ts} \prec v_i$}
+      \If{$Deq_{ts} \neq 0$ and $Deq_{ts} \prec v_i$} \Comment{\red{As before, not sure this is comparing the right things.}}
         \State let $safetyFlag = Unsafe$
       \Else
         \State let $safetyFlag = Safe$
@@ -443,7 +447,7 @@ The process of labeling is done by guaranteeing that processes have the same vie
         \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}))$
       \EndIf
       \State $propagateEarlierResponses(PendingDequeues)$ 
-      \For{($index, confirmationList)$ in $PendingDequeues$}
+      \For{$(index, confirmationList)$ in $PendingDequeues$}
       \If{$confirmationList.ts == Deq_{ts}$}
           \State $confirmationList.responses[j] = safetyFlag$
         \EndIf 
@@ -452,7 +456,7 @@ The process of labeling is done by guaranteeing that processes have the same vie
           \If {$op == Deq_f$ and $p_i \neq p_{invoker}$}
             \State $lQueue.remove(val)$
           \EndIf 
-          \If {$op == Deq_f$}
+          \If {$op == Deq_f$} \Comment{\red{Only for $p_{invoker}$, yes?}}
             \State \Return
           \EndIf
 
@@ -462,8 +466,8 @@ The process of labeling is done by guaranteeing that processes have the same vie
             \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
             \State let $ret = lQueue.deqByIndex(pos)$
           \EndIf
-          \State $labelElements(p_{invoker})$
-          \State $updateUnsafes(PendingDequeues, \textit{index})$
+          \State $labelElements(p_{invoker})$ \Comment{\red{Maybe should be in previous if?  Do we want to label if more elements are already labled for $p_{inv}$?  Or just go ahead and make sure it's stocked up?}} \Comment{\red{$labelElements()$ is not defined anywhere.}}
+          \State $updateUnsafes(PendingDequeues, index)$
           \If{$p_i == p_{invoker}$}
             \State \Return $ret$
           \EndIf
