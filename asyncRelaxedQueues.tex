@@ -4,6 +4,9 @@
 \algtext*{EndIf}
 \algtext*{EndFor}
 
+\theoremstyle{definition}
+\newtheorem{construction}{Construction}
+
 \newcommand{\red}[1]{\textcolor{red}{#1}} % TODO: Delete this before submission
 \newcommand{\pluseq}{\mathrel{+}=}
 
@@ -120,6 +123,8 @@ We assume a fully asynchronous message passing model of computation.  The system
 
 We assume all inter-process communication is reliable, so when a process sends a message, that message will eventually be received at its destination process exactly once.  Additionally, we assume communication channels between processes are First-In, First-Out.  That is, if process $p_i$ sends message $m_1$ to process $p_j$, then sends message $m_2$ also to $p_j$, then $p_j$ will receive $m_1$ before it receives $m_2$.  This assumption does not reduce the generality of our results, as we can implement such an ordering guarantee by attaching a sequence number to each message and buffering incoming messages at each process.  We store out of order messages in this buffer until all previous messages are received, then receive the buffered message.
 
+%TODO: expand definition of reliable channels to mention messages arrive in finite time
+
 While there is no notion of time available to processes in the system, we establish a notion of the time cost of our algorithms by considering that they run in real time.  There are no upper or lower bounds on either local computation time or the time between when a message is sent and received.  However, we can measure an algorithmic time, from outside the system, by expressing it in terms of the number of sequential messages which must occur in that duration \cite{AttiyaWelch04}.  That is, in a particular run, we define the parameter $d$ as the real time duration of the longest time between sending and receiving any one message.  We express algorithmic time in terms of $d$, by considering how many messages the algorithm sends and receives, with each send necessarily occurring after the receive of the previous message.  Since each of those delays may be the largest in that run, this gives a measure of algorithmic runtime without bounding real time message delays.  
 
 %%%%%%%%%%%%%%%
@@ -149,7 +154,9 @@ We can now formally define the relaxed queue we implement in this paper.  Intuit
   The empty sequence is legal.  For any legal sequence $\rho$ of instances of $k$-out-of-order queue operations and $val \in V$, (1) $\rho \cdot Enqueue(val,-)$ is legal, (2) $\rho \cdot Dequeue(-,val)$ is legal iff $val$ is the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho$, and (3) $\rho \cdot Dequeue(-,\bot)$ is legal iff there are fewer than $k$ unmatched $Enqueue$ instances in $\rho$.
 \end{definition}
 
-We are interested in implementations which satisfy \emph{linearizability} \cite{HerlihyWing90}.  Linearizability is a consistency condition which describes how concurrent executions of a data structure relate to the sequential specification of the ADT the structure implements.  Specifically, linearizability requires that operation response values be such that there is a total order of all operation instances in the execution which is legal according to the ADT and which respects the real-time order of instances which do not overlap in real time.  That is, if one instance returns before, in real time, another's invocation, that one which returned first must be ordered first.  This condition provides behavior that matches that we intuitively expect systems to have, disallowing inversions in real time.  Linearizability also has the advantage of being composable, meaning that running multiple linearizable objects in the same execution will necessarily produce an overall linearizable execution.  Linearizability is the strongest consistency condition we might satisfy, so our upper bounds translate to any other consistency condition one might use.  
+We are interested in implementations which satisfy \emph{linearizability} \cite{HerlihyWing90}.  Linearizability is a consistency condition which describes how concurrent executions of a data structure relate to the sequential specification of the ADT the structure implements.  Specifically, linearizability requires that operation response values be such that there is a total order of all operation instances in the execution which is legal according to the ADT and which respects the real-time order of instances which do not overlap in real time.  That is, if one instance returns before, in real time, another's invocation, that one which returned first must be ordered first.  This condition provides behavior that matches that we intuitively expect systems to have, disallowing inversions in real time.  Linearizability also has the advantage of being composable, meaning that running multiple linearizable objects in the same execution will necessarily produce an overall linearizable execution.  Linearizability is the strongest consistency condition we might satisfy, so our upper bounds translate to any other consistency condition one might use.
+
+% TODO: Define run, timed run, admissible (must be infinite), linearization, 
 
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
@@ -188,12 +195,12 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
     \Function{Enqueue}{$val$}
       \State $EnqCount = 0$ \Comment{\red{What is this for? Is it a response counter?  Maybe rename.}}
       \State $incrementTS(v_i)$ \Comment{\red{Is there any reason to pass my own timestamp, instead of just relying on having access to it in the helper?}}
-      \State $Enq_{ts} = v_i$ \Comment{\red{For compactness, maybe have incrementTS() return the new vector, so we can combine with previous line?}}
-      \State send $(EnqReq, val, i, Enq_{ts})$ to all processes \Comment{\red{Switch $i$, $End_{ts}$ for consistency with Dequeue}}
+      \State $Enq_{ts} = v_i$ \label{fifoline:enqTS}\Comment{\red{For compactness, maybe have incrementTS() return the new vector, so we can combine with previous line?}}
+      \State send $(EnqReq, val, i, Enq_{ts})$ to all processes \label{fifoline:sendEnqReq} \Comment{\red{Switch $i$, $End_{ts}$ for consistency with Dequeue}}
     \EndFunction
 
     \Function{Receive}{$EnqReq, val, j, Enq_{ts}$} from $p_j$
-      \State $updateTS(v_i, Enq_{ts})$
+      \State $updateTS(v_i, Enq_{ts})$ \label{fifoline:enqReqTSUpdate}
       \State $lQueue.insertByTS$($val, j, Enq_{ts}$)
       \For{$confirmationList$ in $PendingDequeues$}
         \If {$confirmationList.ts \prec Enq_{ts}$}
@@ -201,13 +208,13 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
         \EndIf
       \EndFor
 
-      \State send $(EnqAck, i)$ to $p_j$
+      \State send $(EnqAck, i)$ to $p_j$ \label{fifoline:sendEnqAck}
     \EndFunction
 
     \Function{Receive}{$EnqAck, j$ from $p_j$}
       \State $EnqCount \pluseq 1$
       \If {$EnqCount == n$} 
-        \Return $EnqResponse$ to user
+        \Return $EnqResponse$ to user\label{fifoline:enqReturn}
       \EndIf
     \EndFunction
     \Statex
@@ -222,11 +229,12 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
     \algrestore{fifoLines}
     \Function{Dequeue}{}
       \State $incrementTS(v_i)$ \Comment{\red{Same questions as in Enqueue.}}
-      \State let $Deq_{ts} = v_i$
-      \State send $(DeqReq, Deq_{ts}, i)$ to all processes
+      \State let $Deq_{ts} = v_i$\label{fifoline:deqTS}
+      \State send $(DeqReq, Deq_{ts}, i)$ to all processes \label{fifoline:sendDeqReq}
     \EndFunction
 
     \Function{Receive}{$(DeqReq, Deq_{ts}, j)$ from $p_j$}
+    \State $updateTS(Deq_{ts})$ \label{fifoline:deqReqTSUpdate} \Comment{\red{This was missing, but seems important.}}
     \State let $p_{invoker} = p_j$ \Comment{\red{We're just renaming, right?  How about we just name it $p_{inv}$ or similar in the function header?}}
       \State let $Deq_{ts} = v_i$ \Comment{\red{This doesn't look right to me.  The $Deq_{ts}$ is what we got in the message, right? I think we can delete this line.}}
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
@@ -237,7 +245,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \Else
         \State let $safetyFlag = Safe$
       \EndIf
-      \State send $(safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes
+      \State send $(safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes \label{fifoline:sendSafetyFlag}
     \EndFunction
 
     \Function{Receive}{$(safetyFlag, Deq_{ts}, i, p_{invoker})$ from $p_j$}
@@ -254,7 +262,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
           \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
           \State let $ret = lQueue.deqByIndex(pos)$
           \State $updateUnsafes(PendingDequeues, index)$
-          \If{$p_i == p_{invoker}$} \Return $ret$ to user \EndIf \Comment{\red{I think this shouldn't be $p_{invoker}$ from the message receipt, this should be the invoking process of the dequeue instance from confLists we're locally executing.}}
+          \If{$p_i == p_{invoker}$} \Return $ret$ to user \label{fifoline:deqReturn} \EndIf \Comment{\red{I think this shouldn't be $p_{invoker}$ from the message receipt, this should be the invoking process of the dequeue instance from confLists we're locally executing.}}
         \EndIf 
       \EndFor
       \EndFunction
@@ -304,21 +312,29 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
 
 %%%%%%%%%%%%%%%
 \subsection{Correctness}
-In order to prove that this algorithm alligns with the Queue specification set forth, we will consider an arbitrary admissable run of invocations denoted R. We construct $\pi$, a permutation of all operation instances in R, by ordering operations in ascending order based on their lexicographic vector timestamp values. 
+In order to prove that this algorithm correctly implements the queue specification, we will consider an arbitrary, admissable timed run $R$.  We will first prove that all invocations have a matching return, so that we have complete operation instances.  We can then construct a total order of all operation instances in $R$ and prove that it respects real time order, making it a valid linearization, and is legal by the specification of a queue.  The core of the proof is in proving that when any process removes a particular $Dequeue$ instance's return value from its local replica of the queue, it deletes the same value as every other process does.  This means that all replicas will undergo the same series of operations, and allows us to prove that they continue removing the correct values.  To ensure that all processes remove the same element, we use the $safe$/$unsafe$ flags to leave elements for any $Dequeue$ instances which linearize earlier, but which that process is not ready to execute on its replica.
+
 \begin{lemma}
-  $\pi$ respects the real time order of non-overlapping instances
+  In $R$, every invocation has a matching response.
 \end{lemma}
+
 \begin{proof}
-  Proof by contradiction. Let there be two non-overlapping operation instances $op1$ and $op2$, where $op1$ is invoked prior to $op2$ in real time order. We will then linearize $op2$ prior to $op1$ in $\pi$. 
-  Given that we have stated that $op1$ occurs before $op2$ in real time, and that the two operation instances are non-overlapping, by the definition of the algorithm, $op1$ must have therefore completed its execution prior to the invocation of $op2$. The completion of $op1$ requires acknowledgement from the invoking process of $op2$ regardless of the type of invocation, and therefore it consequently follows that $op2$ must have a larger timestamp than $op1$. Due to the fact that $op2$ must have recieved and acknowledged $op1$, it follows that it must have a larger timestamp, and thereofre must be linearized after $op1$. THerefore $op1$ must linearize before $op2$, which results in a contradiction to our asusmption that $op2$ preceeds $op1$ ion $\pi$
+When a user invokes an operation at process $p_i$, the algorithm sends an $EnqReq$ message containing the invocation to all processes on line~\ref{fifoline:sendEnqReq} or \ref{fifoline:sendDeqReq}, depending on the operation invoked.  Each process will receive that message in finite time by our assumption of reliable channels and send back an $EnqAck$ for an $Enqueue$ invocation on line~\ref{fifoline:sendEnqAck} or a safety flag for a $Dequeue$ invocation on line~\ref{fifoline:sendSafetyFlag}, as appropriate.  Each of those responses will arrive in finite time, and when $p_i$ receives all $n$ of them, it will generate a matching return on line~\ref{fifoline:enqReturn} for $Enqueue$ or line~\ref{fifoline:deqReturn} for $Dequeue$.
 \end{proof}
 
-\begin{lemma}
-  Every invocation has a matching response.
-\end{lemma}
+Each process reads its vector clock at each invocation, on line~\ref{fifoline:enqTS} or \ref{fifoline:deqTS}, and associates that clock value with that invocation throughout the algorithm.  We will refer to this clock value as the \emph{timestamp} of the instance containing that invocation.
 
+\begin{construction}
+  Let our linearization $\pi$ be the increasing lexicographic order of all operation instances in $R$.
+\end{construction}
+
+\begin{lemma}
+  $\pi$ respects the real time order of non-overlapping instances.
+\end{lemma}
 \begin{proof}
-Based on the specifications of the algorithm, if there is an $Enqueue$, the request for that is sent globally and responded to only to the invoking process.  In the case of a $Dequeue$, the request is sent globally, and the response for that $Dequeue$ iss also sent globally.  
+  Proof by contradiction. Let there be two non-overlapping operation instances $op_1$ and $op_2$, where $op_1$ returns prior to $op_2$'s invocation in real time.  Assume, for the sake of contradition, that $op_2$ is prior to $op_1$ in $\pi$.
+  
+  Given that $op_1$ occurs before $op_2$ in real time, and that the two operation instances are non-overlapping, $op_2$'s timestamp must be larger, lexicographically, than $op_1$'s.  This follows from the fact that $op_1$ will not return until it receives a response from every process, including $op_2$'s invoking process (lines~\ref{fifoline:enqReturn}, \ref{fifoline:deqReturn}.  This means that $op_2$'s invoking process received the invocation for $op_1$ and updated its timestamp (line~\ref{fifoline:enqReqTSUpdate} or \ref{fifoline:deqReqTSUpdate}) before it invoked $op_2$, so $op_2$'s timestamp will be totally ordered after $op_1$'s, implying it is also lexicographically after.
 \end{proof}
 
 \begin{lemma}
