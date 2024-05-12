@@ -193,28 +193,21 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
   \caption{Code for each process $p_i$ to implement a Queue, Handlers for $Enqueue$}\label{alg:fifo}
   \begin{algorithmic}[1]
     \Function{Enqueue}{$val$}
-      \State $EnqCount = 0$ \Comment{\red{What is this for? Is it a response counter?  Maybe rename.}}
-      \State $incrementTS(v_i)$ \Comment{\red{Is there any reason to pass my own timestamp, instead of just relying on having access to it in the helper?}}
-      \State $Enq_{ts} = v_i$ \label{fifoline:enqTS}\Comment{\red{For compactness, maybe have incrementTS() return the new vector, so we can combine with previous line?}}
-      \State send $(EnqReq, val, i, Enq_{ts})$ to all processes \label{fifoline:sendEnqReq} \Comment{\red{Switch $i$, $End_{ts}$ for consistency with Dequeue}}
+      \State $EnqResponseCount = 0$ \Comment{Count responses to this invocation}
+      \State $Enq_{ts} = incrementTS()$ \label{fifoline:enqTS} \Comment{Increment local vector clock, read instance's timestamp}
+      \State send $(EnqReq, val, Enq_{ts}, i)$ to all processes\label{fifoline:sendEnqReq}
     \EndFunction
 
-    \Function{Receive}{$EnqReq, val, j, Enq_{ts}$} from $p_j$
-      \State $updateTS(v_i, Enq_{ts})$ \label{fifoline:enqReqTSUpdate}
-      \State $lQueue.insertByTS$($val, j, Enq_{ts}$)\label{fifoline:executeEnq}
-      \For{$confirmationList$ in $PendingDequeues$}
-        \If {$confirmationList.ts \prec Enq_{ts}$}
-          \State $confirmationList.responses[j] = Safe$ \Comment{\red{Please confirm that this is still valid, even with broadcast safes.}}
-        \EndIf
-      \EndFor
-
-      \State send $(EnqAck, i)$ to $p_j$ \label{fifoline:sendEnqAck}
+    \Function{Receive}{$EnqReq, val, inv, Enq_{ts}$} from $p_{inv}$
+      \State $updateTS(Enq_{ts})$ \label{fifoline:enqReqTSUpdate} \Comment{Update local vector clock by invocation's timestamp}
+      \State $lQueue.insertByTS$($val, inv, Enq_{ts}$)\label{fifoline:executeEnq} \Comment{Locally execute the $Enqueue$ instance}
+      \State send $(EnqAck, i)$ to $p_{inv}$ \label{fifoline:sendEnqAck} \Comment{Acknowledge receipt of the invocation}
     \EndFunction
 
     \Function{Receive}{$EnqAck, j$ from $p_j$}
-      \State $EnqCount \pluseq 1$
-      \If {$EnqCount == n$} 
-        \Return $EnqResponse$ to user\label{fifoline:enqReturn}
+      \State $EnqResponseCount \pluseq 1$
+      \If {$EnqResponseCount == n$} 
+        \Return $EnqResponse$ to user\label{fifoline:enqReturn} 
       \EndIf
     \EndFunction
     \Statex
@@ -228,42 +221,40 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
   \begin{algorithmic}[1]
     \algrestore{fifoLines}
     \Function{Dequeue}{}
-      \State $incrementTS(v_i)$ \Comment{\red{Same questions as in Enqueue.}}
-      \State let $Deq_{ts} = v_i$\label{fifoline:deqTS}
+      \State $Deq_{ts} = incrementTS()$ \Comment{Increment local vector clock, read instance's timestamp}\label{fifoline:deqTS}
+      \State $activeDeqTS = Deq_{ts}$ \Comment{Track active $Dequeue$ instance's timestamp}
       \State send $(DeqReq, Deq_{ts}, i)$ to all processes \label{fifoline:sendDeqReq}
     \EndFunction
 
-    \Function{Receive}{$(DeqReq, Deq_{ts}, j)$ from $p_j$}
-    \State $updateTS(Deq_{ts})$ \label{fifoline:deqReqTSUpdate} \Comment{\red{This was missing, but seems important.}}
-    \State let $p_{invoker} = p_j$ \Comment{\red{We're just renaming, right?  How about we just name it $p_{inv}$ or similar in the function header?}}
-      \State let $Deq_{ts} = v_i$ \Comment{\red{This doesn't look right to me.  The $Deq_{ts}$ is what we got in the message, right? I think we can delete this line.}}
+    \Function{Receive}{$(DeqReq, Deq_{ts}, inv)$ from $p_{inv}$}
+    \State $updateTS(Deq_{ts})$ \label{fifoline:deqReqTSUpdate}
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
-      \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}$))\label{fifoline:savePendingDeq}
+      \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{inv}$))\label{fifoline:savePendingDeq}
       \EndIf
-      \If{$Deq_{ts} \neq 0$ and $Deq_{ts} \prec v_i$} \Comment{\red{We should be comparing the recieved ts ($Deq_{ts}$) with the ts of our own pending dequeue, which we don't seem to be storing anywhere.}}
-        \State let $safetyFlag = Unsafe$
+      \If{$activeDeqTS$ is not $null$ and $activeDeqTS \prec Deq_{ts}$} \Comment{If we have a preceding active $Dequeue$ instance, indicate $unsafe$, else indicate $safe$} \Comment{\red{This will collapse to a $DeqAck$ if I'm right about safe/unsafe being redundant}}
+        \State $safetyFlag = Unsafe$
       \Else
-        \State let $safetyFlag = Safe$
+        \State $safetyFlag = Safe$
       \EndIf
-      \State send $(safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes \label{fifoline:sendSafetyFlag}\label{fifoline:sendDeqAck}
+      \State send $(safetyFlag, Deq_{ts}, p_{inv}, i)$ to all processes \label{fifoline:sendSafetyFlag}\label{fifoline:sendDeqAck}
     \EndFunction
 
-    \Function{Receive}{$(safetyFlag, Deq_{ts}, i, p_{invoker})$ from $p_j$}
+    \Function{Receive}{$(safetyFlag, Deq_{ts}, p_{inv}, j)$ from $p_j$}
       \If{$Deq_{ts}$ not in $PendingDequeues$}
-        \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}))$
+        \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{inv}))$
       \EndIf
-      \State $propagateEarlierResponses(PendingDequeues)$ 
+      \State $propagateEarlierResponses(PendingDequeues,j)$ \Comment{\red{I think this goes away with safe/unsafe}}
       \For{($index, confirmationList)$ in $PendingDequeues$} \Comment{Add this response to confirmation list; locally execute any $Dequeue$ instances with all responses.} %TODO: This comment is too wordy, but the loop is somewhat confusing since it's doing two things.  Perhaps just describe carefully above.
       \If{$confirmationList.ts == Deq_{ts}$}
           \State $confirmationList.responses[j] = safetyFlag$
-        \EndIf 
-        \If{$confirmationList.full()$ and not $confirmationList.handled$}\label{fifoline:fullConfList}
+        \If{$confirmationList.full()$ and not $confirmationList.handled$}\label{fifoline:fullConfList}\Comment{\red{TODO: Make $handled$ go away}}
           \State $confirmationList.handled = True$ \Comment{\red{Why would a handled Dequeue still be in confirmationLists?  Once we handle it, can't we remove it?}}
-          \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
-          \State let $ret = lQueue.deqByIndex(pos)$\label{fifoline:chooseDeqValue}
-          \State $updateUnsafes(PendingDequeues, index)$
-          \If{$p_i == p_{invoker}$} \Return $ret$ to user \label{fifoline:deqReturn} \EndIf \Comment{\red{I think this shouldn't be $p_{invoker}$ from the message receipt, this should be the invoking process of the dequeue instance from confLists we're locally executing.}}
-        \EndIf 
+          \State $ret = lQueue.deqByIndex(index)$\label{fifoline:chooseDeqValue} \Comment{Locally execute the $Dequeue$ instance, leaving elements for prior pending instances} 
+          \State $updateUnsafes(PendingDequeues, index)$ \Comment{\red{What happens here when safe/unsafe is gone?}}
+          \If{$p_i == p_{inv}$} \Return $ret$ to user \label{fifoline:deqReturn} \EndIf \Comment{The invoking process responds to the user}
+        \Else\ break
+        \EndIf
+      \EndIf 
       \EndFor
       \EndFunction
       \Statex
@@ -278,33 +269,42 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
   \begin{algorithmic}[1]
     \algrestore{fifoLines}
     
-    \Function{propagateEarlierResponses}{$PendingDequeues$}
-    \For{$row$ from $len(PendingDequeues) - 1$ down to $1$} \Comment{\red{May need a more descriptive way to talk about iteration order.  These are sorted by timestamp, so are we moving in order of increasing or decreasing timestamp?}}
-    \For{$col$ from $0$ to $n$} \Comment{\red{n-1?}}
-    \State let $response = PendingDequeues[row].responses[col]$ 
-    \If{$response \neq 0$ and $PendingDequeues[row-1].responses[col] == 0$} \Comment{\red{TODO: Update to use $safe$/$unsafe$/empty}}
-    \State $PendingDequeues[row-1].responses[col] = response$ 
-    \EndIf
-    \EndFor
+    \Function{propagateEarlierResponses}{$PendingDequeues, j$}
+    \For{$row$ from $len(PendingDequeues) - 1$ down to $1$} \Comment{If a later-timestamp instance receives a $DeqAck$ from $p_j$, then any ealier-timestamp processes do not need to wait for a $DeqAck$ from $p_j$.} 
+%    \For{$col$ from $0$ to $n-1$} \Comment{The process which sent the $DeqAck$}
+      \State $response = PendingDequeues[row].responses[j]$ \Comment{\red{Cole/Sam: Please confirm that using $j$ this way is correct.}}
+      \If{$response$ is not empty and $PendingDequeues[row-1].responses[j]$ is empty}
+        \State $PendingDequeues[row-1].responses[j] = response$
+      \Else\ break
+      \EndIf
     \EndFor
     \EndFunction
-    \Function{updateUnsafes}{$PendingDequeues, startIndex$}
-      \State let $invoker = PendingDequeues[startIndex].invoker$
-      \For{$index = startIndex$ upto $n$}
+%
+    \Function{updateUnsafes}{$PendingDequeues, startIndex$} \Comment{When locally executing an instance, no longer need to set aside values for it, so update count for all later pending instances}
+      \State $invoker = PendingDequeues[startIndex].invoker$
+      \For{$index = startIndex$ upto $n$} \Comment{\red{Cole/Sam:Didn't this need to break if we saw another instance from the same process?}}
       \State $PendingDequeues[index].responses[invoker] = 1$  
       \EndFor
     \EndFunction
-    \Function{updateTs}{$v_i, v_j$}
-      \For{$i = 0$ upto $n - 1$}
-      \State $v_i[i] = v_j[i]$ if $v_j[i] > v_i[i]$
-      \EndFor
+%
+    \Function{updateTs}{$v_j$}
+      \If{$v_j$ is empty}
+        \State $v_i[i] \pluseq 1$
+      \Else
+        \For{$k = 0$ up to $n - 1$}
+          \State $v_i[k] = max(v_i[k], v_j[k])$
+        \EndFor
+      \EndIf
+      \State return $v_i$
     \EndFunction
+%
     \Function{createList}{$Deq_{ts}, p_{invoker}$}
-    \State $ConfirmationList.responses = [0,0,...,0]$ \Comment{A list of $n$ 0s} \Comment{\red{Is $ConfirmationList$ defined?  Because it looks like we're setting attributes of an object we haven't initialized.  I get that this is basically a constructor, but maybe we can make this more straightforward?}}
-    \State $ConfirmationList.ts = Deq_{ts}$ \Comment{A vector clock timestamp}
-    \State $ConfirmationList.handled = False$ \Comment{True once removed}
-    \State $ConfirmationList.invoker = p_{invoker}$ \Comment{The invoking process of the Dequeue}
-    \State \Return $ConfirmationList$
+      \State create a new confirmation list $ConfirmationList$
+      \State $ConfirmationList.responses = [0,0,...,0]$ \Comment{A list of $n$ 0s}
+      \State $ConfirmationList.ts = Deq_{ts}$ \Comment{A vector clock timestamp}
+      \State $ConfirmationList.handled = False$ \Comment{True once locally executed}
+      \State $ConfirmationList.invoker = p_{invoker}$ \Comment{The invoking process of the Dequeue}
+      \State return $ConfirmationList$
     \EndFunction
   \end{algorithmic}
 \end{algorithm}
