@@ -191,7 +191,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
 \subsection{Algorithm}
 
 % TODO: Define variables, structures, functions.
-% Specifically: lQueue.deqByPosition(pos,ts) does not return a value with later timestamp than ts, instead returning the element at index pos in the sublist of elements with timestamp preceding ts, or \bot if none such exists.
+% Specifically: lQueue.deqByIndex(pos,ts) does not return a value with later timestamp than ts, instead returning the element at index pos in the sublist of elements with timestamp preceding ts, or \bot if none such exists.
 
 \begin{algorithm}
   \caption{Code for each process $p_i$ to implement a Queue, Handlers for $Enqueue$}\label{alg:fifo}
@@ -226,7 +226,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
     \algrestore{fifoLines}
     \Function{Dequeue}{}
       \State $Deq_{ts} = incrementTS()$ \Comment{Increment local vector clock, read instance's timestamp}\label{fifoline:deqTS}
-      \State $activeDeqTS = Deq_{ts}$ \Comment{Track active $Dequeue$ instance's timestamp}
+%      \State $activeDeqTS = Deq_{ts}$ \Comment{Track active $Dequeue$ instance's timestamp}
       \State send $(DeqReq, Deq_{ts}, i)$ to all processes \label{fifoline:sendDeqReq}
     \EndFunction
 
@@ -235,29 +235,31 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
       \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{inv}$))\label{fifoline:savePendingDeq}
       \EndIf
-      \If{$activeDeqTS$ is not $null$ and $activeDeqTS \prec Deq_{ts}$} \Comment{If we have a preceding active $Dequeue$ instance, indicate $unsafe$, else indicate $safe$} \Comment{\red{This will collapse to a $DeqAck$ if I'm right about safe/unsafe being redundant}}
-        \State $safetyFlag = Unsafe$
-      \Else
-        \State $safetyFlag = Safe$
-      \EndIf
-      \State send $(safetyFlag, Deq_{ts}, p_{inv}, i)$ to all processes \label{fifoline:sendSafetyFlag}\label{fifoline:sendDeqAck}
+%      \If{$activeDeqTS$ is not $null$ and $activeDeqTS \prec Deq_{ts}$} \Comment{If we have a preceding active $Dequeue$ instance, indicate $unsafe$, else indicate $safe$} \Comment{\red{This will collapse to a $DeqAck$ if I'm right about safe/unsafe being redundant}}
+%        \State $safetyFlag = Unsafe$
+%      \Else
+%        \State $safetyFlag = Safe$
+%      \EndIf
+      %      \State send $(safetyFlag, Deq_{ts}, p_{inv}, i)$ to all processes \label{fifoline:sendSafetyFlag}\label{fifoline:sendDeqAck}
+      \State send $(DeqAck, Deq_{ts}, p_{inv}, i)$ to all processes \label{fifoline:sendSafetyFlag}\label{fifoline:sendDeqAck}
     \EndFunction
 
-    \Function{Receive}{$(safetyFlag, Deq_{ts}, p_{inv}, j)$ from $p_j$}
+%    \Function{Receive}{$(safetyFlag, Deq_{ts}, p_{inv}, j)$ from $p_j$}
+    \Function{Receive}{$(DeqAck, Deq_{ts}, p_{inv}, j)$ from $p_j$}
       \If{$Deq_{ts}$ not in $PendingDequeues$}
         \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{inv}))$
       \EndIf
-      \State $propagateEarlierResponses(PendingDequeues,j)$ \Comment{\red{I think this goes away with safe/unsafe}}
-      \For{($index, confirmationList)$ in $PendingDequeues$} \Comment{Add this response to confirmation list; locally execute any $Dequeue$ instances with all responses.} %TODO: This comment is too wordy, but the loop is somewhat confusing since it's doing two things.  Perhaps just describe carefully above.
-      \If{$confirmationList.ts == Deq_{ts}$}
-          \State $confirmationList.responses[j] = safetyFlag$
-        \If{$confirmationList.full()$}\label{fifoline:fullConfList}
-          \State $ret = lQueue.deqByIndex(index, Deq_{ts})$\label{fifoline:chooseDeqValue} \Comment{Locally execute the $Dequeue$ instance, leaving elements for prior pending instances} 
-          \State $updateUnsafes(PendingDequeues, index)$ \Comment{\red{What happens here when safe/unsafe is gone?}}
-          \State delete $confirmationList$ from $PendingDequeues$
-          \If{$p_i == p_{inv}$} \Return $ret$ to user \label{fifoline:deqReturn} \EndIf \Comment{The invoking process responds to the user}
-        \Else\ break
-        \EndIf
+      \State Define $currentConfList$ as the confirmation list in $PendingDequeues$ which has $ts == Deq_{ts}$\Comment{\red{Cole/Sam: I realized this needs to happen before propagate $EarlierResponses()$. Verify this makes sense and works.}}
+%          \State $confirmationList.responses[j] = safetyFlag$
+      \State $currentConfList.responses[j] = True$
+      \State $propagateEarlierResponses(PendingDequeues,j)$ \Comment{\red{Cole/Sam: Do we need this?  Is it an optimization?  I feel like it complicates the proof, since I need to argue that the earlier $Dequeue$ instance is safe to locally execute. (I think true, but what is the benefit?)}}
+      \For{($index, confirmationList)$ in $PendingDequeues$} 
+%        \If{$confirmationList.full()$}\label{fifoline:fullConfList}
+      \If{all $response$s in $confirmationList$ are $True$}\label{fifoline:fullConfList}
+        \State $ret = lQueue.deqByIndex(index, Deq_{ts})$\label{fifoline:chooseDeqValue} \Comment{Locally execute the $Dequeue$ instance, leaving elements for prior pending instances} 
+%          \State $updateUnsafes(PendingDequeues, index)$ \Comment{\red{What happens here when safe/unsafe is gone?}}
+        \State delete $confirmationList$ from $PendingDequeues$
+        \If{$p_i == p_{inv}$} \Return $ret$ to user \label{fifoline:deqReturn} \EndIf \Comment{The invoking process responds to the user}
       \EndIf 
       \EndFor
       \EndFunction
@@ -274,22 +276,23 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
     \algrestore{fifoLines}
     
     \Function{propagateEarlierResponses}{$PendingDequeues, j$}
-    \For{$row$ from $len(PendingDequeues) - 1$ down to $1$} \Comment{If a later-timestamp instance receives a $DeqAck$ from $p_j$, then any ealier-timestamp processes do not need to wait for a $DeqAck$ from $p_j$.} 
+    \For{$row$ from $len(PendingDequeues) - 1$ down to $1$} \Comment{If a later-timestamp instance receives a $DeqAck$ from $p_j$, then any earlier-timestamp processes do not need to wait for a $DeqAck$ from $p_j$.} 
 %    \For{$col$ from $0$ to $n-1$} \Comment{The process which sent the $DeqAck$}
       \State $response = PendingDequeues[row].responses[j]$ \Comment{\red{Cole/Sam: Please confirm that using $j$ this way is correct.}}
-      \If{$response$ is not empty and $PendingDequeues[row-1].responses[j]$ is empty}
-        \State $PendingDequeues[row-1].responses[j] = response$
+%      \If{$response$ is not empty and $PendingDequeues[row-1].responses[j]$ is empty}
+      \If{$response$ is $True$ and $PendingDequeues[row-1].responses[j]$ is $False$}
+        \State $PendingDequeues[row-1].responses[j] = True$
       \Else\ break
       \EndIf
     \EndFor
     \EndFunction
 %
-    \Function{updateUnsafes}{$PendingDequeues, startIndex$} \Comment{When locally executing an instance, no longer need to set aside values for it, so update count for all later pending instances}
-      \State $invoker = PendingDequeues[startIndex].invoker$
-      \For{$index = startIndex$ upto $n$} \Comment{\red{Cole/Sam:Didn't this need to break if we saw another instance from the same process?}}
-      \State $PendingDequeues[index].responses[invoker] = safe$  
-      \EndFor
-    \EndFunction
+%    \Function{updateUnsafes}{$PendingDequeues, startIndex$} \Comment{When locally executing an instance, no longer need to set aside values for it, so update count for all later pending instances}
+%      \State $invoker = PendingDequeues[startIndex].invoker$
+%      \For{$index = startIndex$ upto $n$} \Comment{\red{Cole/Sam:Didn't this need to break if we saw another instance from the same process?}}
+%      \State $PendingDequeues[index].responses[invoker] = safe$  
+%      \EndFor
+%    \EndFunction
 %
     \Function{updateTs}{$v_j$}
       \If{$v_j$ is empty}
