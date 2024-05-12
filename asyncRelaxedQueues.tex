@@ -1,4 +1,4 @@
-\documentclass[a4paper,USenglish]{lipics-v2021} % TODO: Re-add anonymous tag
+\documentclass[a4paper,anonymous,USenglish]{lipics-v2021} % TODO: Re-add anonymous tag
 
 \usepackage{algorithm,algpseudocode}
 \algtext*{EndIf}
@@ -247,10 +247,10 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \For{($index, confirmationList)$ in $PendingDequeues$} \Comment{Add this response to confirmation list; locally execute any $Dequeue$ instances with all responses.} %TODO: This comment is too wordy, but the loop is somewhat confusing since it's doing two things.  Perhaps just describe carefully above.
       \If{$confirmationList.ts == Deq_{ts}$}
           \State $confirmationList.responses[j] = safetyFlag$
-        \If{$confirmationList.full()$ and not $confirmationList.handled$}\label{fifoline:fullConfList}\Comment{\red{TODO: Make $handled$ go away}}
-          \State $confirmationList.handled = True$ \Comment{\red{Why would a handled Dequeue still be in confirmationLists?  Once we handle it, can't we remove it?}}
+        \If{$confirmationList.full()$}\label{fifoline:fullConfList}
           \State $ret = lQueue.deqByIndex(index)$\label{fifoline:chooseDeqValue} \Comment{Locally execute the $Dequeue$ instance, leaving elements for prior pending instances} 
           \State $updateUnsafes(PendingDequeues, index)$ \Comment{\red{What happens here when safe/unsafe is gone?}}
+          \State delete $confirmationList$ from $PendingDequeues$
           \If{$p_i == p_{inv}$} \Return $ret$ to user \label{fifoline:deqReturn} \EndIf \Comment{The invoking process responds to the user}
         \Else\ break
         \EndIf
@@ -283,7 +283,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
     \Function{updateUnsafes}{$PendingDequeues, startIndex$} \Comment{When locally executing an instance, no longer need to set aside values for it, so update count for all later pending instances}
       \State $invoker = PendingDequeues[startIndex].invoker$
       \For{$index = startIndex$ upto $n$} \Comment{\red{Cole/Sam:Didn't this need to break if we saw another instance from the same process?}}
-      \State $PendingDequeues[index].responses[invoker] = 1$  
+      \State $PendingDequeues[index].responses[invoker] = safe$  
       \EndFor
     \EndFunction
 %
@@ -302,7 +302,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \State create a new confirmation list $ConfirmationList$
       \State $ConfirmationList.responses = [0,0,...,0]$ \Comment{A list of $n$ 0s}
       \State $ConfirmationList.ts = Deq_{ts}$ \Comment{A vector clock timestamp}
-      \State $ConfirmationList.handled = False$ \Comment{True once locally executed}
+%      \State $ConfirmationList.handled = False$ \Comment{True once locally executed}
       \State $ConfirmationList.invoker = p_{invoker}$ \Comment{The invoking process of the Dequeue}
       \State return $ConfirmationList$
     \EndFunction
