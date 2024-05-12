@@ -201,7 +201,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
 
     \Function{Receive}{$EnqReq, val, j, Enq_{ts}$} from $p_j$
       \State $updateTS(v_i, Enq_{ts})$ \label{fifoline:enqReqTSUpdate}
-      \State $lQueue.insertByTS$($val, j, Enq_{ts}$)
+      \State $lQueue.insertByTS$($val, j, Enq_{ts}$)\label{fifoline:executeEnq}
       \For{$confirmationList$ in $PendingDequeues$}
         \If {$confirmationList.ts \prec Enq_{ts}$}
           \State $confirmationList.responses[j] = Safe$ \Comment{\red{Please confirm that this is still valid, even with broadcast safes.}}
@@ -238,14 +238,14 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
     \State let $p_{invoker} = p_j$ \Comment{\red{We're just renaming, right?  How about we just name it $p_{inv}$ or similar in the function header?}}
       \State let $Deq_{ts} = v_i$ \Comment{\red{This doesn't look right to me.  The $Deq_{ts}$ is what we got in the message, right? I think we can delete this line.}}
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
-      \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}$))
+      \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}$))\label{fifoline:savePendingDeq}
       \EndIf
       \If{$Deq_{ts} \neq 0$ and $Deq_{ts} \prec v_i$} \Comment{\red{We should be comparing the recieved ts ($Deq_{ts}$) with the ts of our own pending dequeue, which we don't seem to be storing anywhere.}}
         \State let $safetyFlag = Unsafe$
       \Else
         \State let $safetyFlag = Safe$
       \EndIf
-      \State send $(safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes \label{fifoline:sendSafetyFlag}
+      \State send $(safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes \label{fifoline:sendSafetyFlag}\label{fifoline:sendDeqAck}
     \EndFunction
 
     \Function{Receive}{$(safetyFlag, Deq_{ts}, i, p_{invoker})$ from $p_j$}
@@ -257,10 +257,10 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \If{$confirmationList.ts == Deq_{ts}$}
           \State $confirmationList.responses[j] = safetyFlag$
         \EndIf 
-        \If{$confirmationList.full()$ and not $confirmationList.handled$}
+        \If{$confirmationList.full()$ and not $confirmationList.handled$}\label{fifoline:fullConfList}
           \State $confirmationList.handled = True$ \Comment{\red{Why would a handled Dequeue still be in confirmationLists?  Once we handle it, can't we remove it?}}
           \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
-          \State let $ret = lQueue.deqByIndex(pos)$
+          \State let $ret = lQueue.deqByIndex(pos)$\label{fifoline:chooseDeqValue}
           \State $updateUnsafes(PendingDequeues, index)$
           \If{$p_i == p_{invoker}$} \Return $ret$ to user \label{fifoline:deqReturn} \EndIf \Comment{\red{I think this shouldn't be $p_{invoker}$ from the message receipt, this should be the invoking process of the dequeue instance from confLists we're locally executing.}}
         \EndIf 
@@ -335,6 +335,26 @@ Each process reads its vector clock at each invocation, on line~\ref{fifoline:en
   Proof by contradiction. Let there be two non-overlapping operation instances $op_1$ and $op_2$, where $op_1$ returns prior to $op_2$'s invocation in real time.  Assume, for the sake of contradition, that $op_2$ is prior to $op_1$ in $\pi$.
   
   Given that $op_1$ occurs before $op_2$ in real time, and that the two operation instances are non-overlapping, $op_2$'s timestamp must be larger, lexicographically, than $op_1$'s.  This follows from the fact that $op_1$ will not return until it receives a response from every process, including $op_2$'s invoking process (lines~\ref{fifoline:enqReturn}, \ref{fifoline:deqReturn}.  This means that $op_2$'s invoking process received the invocation for $op_1$ and updated its timestamp (line~\ref{fifoline:enqReqTSUpdate} or \ref{fifoline:deqReqTSUpdate}) before it invoked $op_2$, so $op_2$'s timestamp will be totally ordered after $op_1$'s, implying it is also lexicographically after.
+\end{proof}
+
+Next, we consider how each process locally executes each operation instance.  We show that all processes do so in the same way, meaning that their replicas of the data structure move through the same sequence of states, and thus continue to behave properly.
+
+\begin{lemma}
+  When a process locally executes any $Dequeue$ instance $op$, it has previously either locally executed any instance with a lexicographically smaller timestamp or has it in $pendingDequeues$.
+\end{lemma}
+
+\begin{proof}
+  By line~\ref{fifoline:fullConfList}, $p_i$ will not locally execute $op$ until it has received a $DeqAck$ for $op$ from every process.  But when any process sends a $DeqAck$, on line~\ref{fifoline:sendDeqAck}, it has updated its timestamp to be larger than $op$'s timestamp.  Thus, any instance invoked at that process after that point will have a totally, and thus lexicographically, larger timestamp than $op$.  This means that any instance $op'$ with a lexicographically smaller timestamp than $op$ must have been invoked before its invoking process sent a $DeqAck$ for $op$.  By FIFO message order, that instance's request message, sent on line~\ref{fifoline:sendEnqReq} or \ref{fifoline:sendDeqReq}, would have arrived at $p_i$ before the $DeqAck$ for $op$ from that process, and $p_i$ would have either locally executed $op'$ on line~\ref{fifoline:executeEnq} if it was an $Enqueue$ instance, or put it in $pendingDequeues$ on line~\ref{fifoline:savePendingDeq} if it was a $Dequeue$ instance.  If it was a $Dequeue$ instance, the only time $p_i$ could remove $op'$ from $pendingDequeues$ is in lines~\ref{fifoline:fullConfList}-\ref{fifoline:deqReturn}, when $p_i$ locally executes $op'$.  Thus, when $p_i$ locally executes $op$, it must have already either locally executed $op'$, or have it in $pendingDequeues$, as claimed.
+\end{proof}
+
+This means that during local execution of a $Dequeue$ instance, each process already has the arguments of all earlier-linearized $Enqueue$ instances in its replica of the queue, and has either taken out the return values of all earlier-linearized $Dequeue$ instances, or has those instances in $pendingDequeues$, and can thus correctly count how many elements it should leave in the queue replica for those prior instances to return, and chooses and returns the correct value on line~\ref{fifoline:chooseDeqValue}.
+
+\begin{lemma}
+  $\pi$ is a legal sequence by the specification of a FIFO queue.
+\end{lemma}
+
+\begin{proof}
+
 \end{proof}
 
 \begin{lemma}
