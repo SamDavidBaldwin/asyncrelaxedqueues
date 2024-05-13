@@ -198,7 +198,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
 \begin{algorithm}
   \caption{Code for each process $p_i$ to implement a Queue, Handlers for $Enqueue$}\label{alg:fifo}
   \begin{algorithmic}[1]
-    \Function{Enqueue}{$val$}
+    \Function{Enqueue}{$val$}\label{fifoline:invEnq}
       \State $EnqResponseCount = 0$ \Comment{Count responses to this invocation}
       \State $Enq_{ts} = incrementTS()$ \label{fifoline:enqTS} \Comment{Increment local vector clock, read instance's timestamp}
       \State send $(EnqReq, val, Enq_{ts}, i)$ to all processes\label{fifoline:sendEnqReq}
@@ -215,7 +215,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \If {$EnqResponseCount == n$} 
         \Return $EnqResponse$ to user\label{fifoline:enqReturn} 
       \EndIf
-    \EndFunction
+    \EndFunction \label{fifoline:finishEnq}
     \Statex
     \Statex \emph{(continues below)}
     \algstore{fifoLines}
@@ -495,7 +495,9 @@ This runtime is optimal, as we can show by a simple indistinguishability argumen
 %%%%%%%%%%%%%%%
 \section{Asynchronous Out-of-Order Queues}
 
-We next move on to consider how we might be able to get around the lower bound in Lemma~\ref{fifolem:pairfreeLB}.  Relaxation has previously been useful for circumventing lower bounds 
+We next move on to consider how we might be able to get around the lower bound in Lemma~\ref{fifolem:pairfreeLB}.  Relaxation has previously been useful for circumventing lower bounds \cite{TalmageWelch14}, so we consider it here.  The $k$-Out-of-Order relaxed $Dequeue$ is still pair-free, since $Dequeue$ cannot return the same value more than once, but there are more possible return values, many of which are not so order-constrained.  We follow \cite{TalmageWelch14} in using relaxation to split $Dequeue$ instances into two types: ``slow'' $Dequeue$s that behave like those in the FIFO algorithm above, taking $2d$ time to return, and ``fast'' $Dequeue$s which return a value immediately on execution, not waiting for the background coordinating communication that slows down other operations.  To enable the algorithm to do this without violating legality, we partition the set of $k$ values which a $Dequeue$ instance can return and give each process ownership of a disjoint subset.  Then that process can safely $Dequeue$ any of its own elements, knowing that no other process will return them to a $Dequeue$.  When a process runs out of elements, its next $Dequeue$ instance will be slow, as it takes the time to coordinate with other processes to determine its return value.  We use that same time to assign ownership of more values, so that future $Dequeue$ instances at that process can be fast again.
+
+Overall, this means that most $Dequeue$ instances take no time at all for comunication delay, vastly outperforming the unrelaxed queue.  The worst case per-instance cost is identical, but the amortized performance is significantly better.  One interesting aspect of this algorithm, that makes it significantly more complex than just adding relaxation handling to Algorithm~\ref{alg:fifo} is that we can no longer rely solely on timestamp order for linearization.  Since fast $Dequeue$ instances return instantly, there is no guarantee that timstamp order correctly captures their real-time order.  Thus, we must construct a much more complex linearization order to satisfy real-time order, then prove that it is legal.  We rely on invariants related to value ownership, to ensure that fast instances choose values that will be legal for them to return at their linearization points, even if those are quite differnt than the timestamp order the code actually sees. 
 
 %%%%%%%%%%%%%%%
 \subsection{Description}
@@ -508,105 +510,60 @@ The process of labeling is done by guaranteeing that processes have the same vie
 %%%%%%%%%%%%%%%
 \subsection{Algorithm}
 
-\begin{algorithm}
-  \caption{Code for each process $p_i$ to implement a Queue with out-of-order k-relaxed \textit{Dequeue}, where $k \geq n$: Handlers for $Enqueue$}\label{alg:relaxed}
-  \begin{algorithmic}[1]
-    \Statex \Comment{\red{Is this entirely the same as for unrelaxed queues? I know I said to keep it, but I'm second-guessing whether we should include it if it's in a separate algorithm block and completely unchanged.}
-}
-    \Function{Enqueue}{$val$}
-      \State $EnqCount = 0$
-      \State $incrementTS(v_i)$
-      \State $Enq_{ts} = v_i$
-      \State send $(EnqReq, val, i, Enq_{ts})$ to all processes
-    \EndFunction
-
-    \Function{Receive}{$EnqReq, val, j, Enq_{ts}$} from $p_j$
-      \State $updateTS(v_i, Enq_{ts})$
-      \State $lQueue.insertByTS$($val, j, Enq_{ts}$)
-      \For{$confirmationList$ in $PendingDequeues$}
-        \If {$confirmationList.ts \prec Enq_{ts}$}
-          \State $confirmationList.responses[j] = Safe$
-        \EndIf
-      \EndFor
-
-      \State send $(EnqAck, i)$ to $p_j$
-    \EndFunction
-
-    \Function{Receive}{$EnqAck, j$ from $p_j$}
-      \State $EnqCount \pluseq 1$
-      \If {$EnqCount == n$} 
-        \Return $EnqResponse$
-      \EndIf
-    \EndFunction
-    \Statex
-    \Statex \emph{(continues below)}
-    \algstore{relaxedLines}
-  \end{algorithmic}
-\end{algorithm}
+Becuase this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portions that are identical to those in that algorithm.  For example, the code for handling $Enqueue$ is exactly the same as that on lines~\ref{fifoline:invEnq}-\ref{fifoline:finishEnq} of Algorithm~\ref{alg:fifo}, so we omit it here.  Any code not presented here is identical to that above.  The code for handling $Dequeue$ is similar to what we had before, but differentiates fast and slow instances, so we present it here. 
 
 \begin{algorithm}
-  \caption{Algorithm~\ref{alg:relaxed} continued: Handlers for $Dequeue$}
+  \caption{Queue with $k$-Out-of-Order Relaxed $Dequeue$: Handlers for $Dequeue$}\label{alg:relaxed}
   \begin{algorithmic}[1]
-    \algrestore{relaxedLines}
     \Function{Dequeue}{}
-      \State $incrementTS(v_i)$
-      \State let $Deq_{ts} = v_i$
+      \State $Deq_{ts} = incrementTS()$
       \If {$localQueue.peekByLabel(p_{i}) \neq \bot$}
-        \State let $ret = localQueue.deqByLabel(p_i)$
+        \State $ret = localQueue.deqByLabel(p_i)$
         \State send $(Deq_f, ret, i, Deq_{ts})$ to all processes
-        \State \Comment{\red{Don't we need to be returning to the user here?  Or does that happen after one round trip?}}
-        \Statex \Comment{\red{Can't be here, as 0-duration op instances don't linearize.  But as written, our fast dequeues are no faster than slow dequeues, just choosing their return value sooner.}}
+        \State \Return $ret$
       \Else
         \State send $(Deq_s, null, i, Deq_{ts})$ to all processes
       \EndIf
     \EndFunction
 
-    \Function{Receive}{($op, val, j, Deq_{ts})$ from $p_j$}
-      \State $updateTS(v_i, Deq_{ts})$
-      \State let $p_{invoker} = p_j$  \Comment{\red{As above, this seems extraneous.}}
+    \Function{Receive}{($op, val, inv, Deq_{ts})$ from $p_{inv}$}
+      \State $updateTS(Deq_{ts})$
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
-      \State $PendingDequeues.insertByTS(createList(Deq_{ts}, p_{invoker}$))
+        \State $PendingDequeues.insertByTS(createList(Deq_{ts}, p_{inv}$))
       \EndIf
-      \If{$Deq_{ts} \neq 0$ and $Deq_{ts} \prec v_i$} \Comment{\red{As before, not sure this is comparing the right things.}}
-        \State let $safetyFlag = Unsafe$
-      \Else
-        \State let $safetyFlag = Safe$
-      \EndIf
-      \State send $(op, val, safetyFlag, Deq_{ts}, i, p_{invoker})$ to all processes
+      \State send $(op, val, DeqAck, Deq_{ts}, i, p_{inv})$ to all processes
     \EndFunction
 
-    \Function{Receive}{$(op, val, safetyFlag, Deq_{ts}, i, p_{invoker})$ from $p_j$}
+    \Function{Receive}{$(op, val, DeqAck, Deq_{ts}, j, p_{inv})$ from $p_j$}
       \If{$Deq_{ts}$ not in $PendingDequeues$}
-        \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{invoker}))$
+        \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{inv}))$
       \EndIf
-      \State $propagateEarlierResponses(PendingDequeues)$ 
-      \For{$(index, confirmationList)$ in $PendingDequeues$}
-      \If{$confirmationList.ts == Deq_{ts}$}
+%      \State $propagateEarlierResponses(PendingDequeues)$ 
+      \State Define $currentConfList$ a sthe confirmation list in $PendingDequeues$ which has $ts == Deq_{ts}$
           \State $confirmationList.responses[j] = safetyFlag$
-        \EndIf 
-        \If{$confirmationList.full()$ and not $confirmationList.handled$}
-          \State $confirmationList.handled = True$ 
-          \If {$op == Deq_f$ and $p_i \neq p_{invoker}$}
+      \For{$(index, confirmationList)$ in $PendingDequeues$}
+        \If{all $responses$ in $confirmationList$ are $True$}
+          \If {$op == Deq_f$ and $p_i \neq p_{inv}$}
             \State $lQueue.remove(val)$
+          \Else    
+            \If {$localQueue.peekByLabel(p_{inv}) \neq \bot$}
+              \State $ret = lQueue.deqByLabel(p_{inv})$
+            \Else 
+              \State $ret = lQueue.deqByIndex(index)$
+            \EndIf
+            \State $labelElements(p_{inv})$
+            \If{$p_i == p_{inv}$}
+              \State \Return $ret$
+            \EndIf
           \EndIf 
-          \If {$op == Deq_f$} \Comment{\red{Only for $p_{invoker}$, yes?}}
-            \State \Return
-          \EndIf
-
-          \If {$localQueue.peekByLabel(p_{invoker}) \neq \bot$}
-          \State let $ret = lQueue.deqByLabel(p_{invoker})$
-          \Else 
-            \State let $pos$ = Number of $Unsafe$ flags in $confirmationList.responses$
-            \State let $ret = lQueue.deqByIndex(pos)$
-          \EndIf
-          \State $labelElements(p_{invoker})$ \Comment{\red{Maybe should be in previous if?  Do we want to label if more elements are already labled for $p_{inv}$?  Or just go ahead and make sure it's stocked up?}} \Comment{\red{$labelElements()$ is not defined anywhere.}}
-          \State $updateUnsafes(PendingDequeues, index)$
-          \If{$p_i == p_{invoker}$}
-            \State \Return $ret$
-          \EndIf
         \EndIf 
       \EndFor
-    \EndFunction
+      \EndFunction
+%
+      \Function{labelElements}{$p_j$} from \cite{TalmageWelch14}
+      \State $y = lQueue.unlabeledSize()$
+      \State $lQueue.labelOldest(p_j,x)$, where $x = \min\{\lfloor k/n\rfloor, y\}$
+      \EndFunction
   \end{algorithmic}
 \end{algorithm}
 
@@ -614,7 +571,7 @@ The process of labeling is done by guaranteeing that processes have the same vie
 
 %%%%%%%%%%%%%%%
 \subsection{Correctness}
-For the K-OOO queue the same strucutre of a run R and a permutation $\pi$ is established. Lemmas 5.1, 5.2, and 5.4 remain unchanged, as the out of order behavior does not inherently adjust those behaviors of the queue structure. The Out of order behavior does not allow for the violation of real time order linearization, as it only allows for the structure to be accessed in an expanded manor. It also doesn't adjust how the there must be a matching response for any invocation or that there must be a corresponding enqueue for each dequeue invocations. 
+For the K-OOO queue the same strucutre of a run $R$ and a permutation $\pi$ is established. Lemmas 5.1, 5.2, and 5.4 remain unchanged, as the out of order behavior does not inherently adjust those behaviors of the queue structure. The Out of order behavior does not allow for the violation of real time order linearization, as it only allows for the structure to be accessed in an expanded manor. It also doesn't adjust how the there must be a matching response for any invocation or that there must be a corresponding enqueue for each dequeue invocations. 
 
 However, given that the relaxation adjusts the structures of dequeues, we must further prove that with this adjusted behavior the local view of the queues are equivalent at the time of dequeue, and that elements, when dequeued are unique. 
 
