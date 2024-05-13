@@ -254,7 +254,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \State Define $currentConfList$ as the confirmation list in $PendingDequeues$ which has $ts == Deq_{ts}$\Comment{\red{Cole/Sam: I realized this needs to happen before propagate $EarlierResponses()$. Verify this makes sense and works.}}
 %          \State $confirmationList.responses[j] = safetyFlag$
       \State $currentConfList.responses[j] = True$
-      \State $propagateEarlierResponses(PendingDequeues,j)$ \Comment{\red{Cole/Sam: Do we need this?  Is it an optimization?  I feel like it complicates the proof, since I need to argue that the earlier $Dequeue$ instance is safe to locally execute. (I think true, but what is the benefit?)}}
+%      \State $propagateEarlierResponses(PendingDequeues,j)$ \Comment{\red{Cole/Sam: Do we need this?  Is it an optimization?  I feel like it complicates the proof, since I need to argue that the earlier $Dequeue$ instance is safe to locally execute. (I think true, but what is the benefit?)}}
       \For{($index, confirmationList)$ in $PendingDequeues$} 
 %        \If{$confirmationList.full()$}\label{fifoline:fullConfList}
       \If{all $response$s in $confirmationList$ are $True$}\label{fifoline:fullConfList}
@@ -277,17 +277,17 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
   \begin{algorithmic}[1]
     \algrestore{fifoLines}
     
-    \Function{propagateEarlierResponses}{$PendingDequeues, j$}
-    \For{$row$ from $len(PendingDequeues) - 1$ down to $1$} \Comment{If a later-timestamp instance receives a $DeqAck$ from $p_j$, then any earlier-timestamp processes do not need to wait for a $DeqAck$ from $p_j$.} 
+%    \Function{propagateEarlierResponses}{$PendingDequeues, j$}
+%    \For{$row$ from $len(PendingDequeues) - 1$ down to $1$} \Comment{If a later-timestamp instance receives a $DeqAck$ from $p_j$, then any earlier-timestamp processes do not need to wait for a $DeqAck$ from $p_j$.} 
 %    \For{$col$ from $0$ to $n-1$} \Comment{The process which sent the $DeqAck$}
-      \State $response = PendingDequeues[row].responses[j]$ \Comment{\red{Cole/Sam: Please confirm that using $j$ this way is correct.}}
+%      \State $response = PendingDequeues[row].responses[j]$ \Comment{\red{Cole/Sam: Please confirm that using $j$ this way is correct.}}
 %      \If{$response$ is not empty and $PendingDequeues[row-1].responses[j]$ is empty}
-      \If{$response$ is $True$ and $PendingDequeues[row-1].responses[j]$ is $False$}
-        \State $PendingDequeues[row-1].responses[j] = True$
-      \Else\ break
-      \EndIf
-    \EndFor
-    \EndFunction
+%      \If{$response$ is $True$ and $PendingDequeues[row-1].responses[j]$ is $False$}
+%        \State $PendingDequeues[row-1].responses[j] = True$
+%      \Else\ break
+%      \EndIf
+%    \EndFor
+%    \EndFunction
 %
 %    \Function{updateUnsafes}{$PendingDequeues, startIndex$} \Comment{When locally executing an instance, no longer need to set aside values for it, so update count for all later pending instances}
 %      \State $invoker = PendingDequeues[startIndex].invoker$
@@ -437,7 +437,7 @@ As observed in Lemma~\ref{fifolem:responses}, the algorithm returns to every inv
 
 This runtime is optimal, as we can show by a simple indistinguishability argument, that any \emph{pair-free} operation must take at least $2d$ time from invocation to response.  A pair-free operation \cite{WangTalmageLeeWelch18} is one, like $Dequeue$, which both depends on and changes the state of the data structure, such that it is possible for a pair of adjacent instances to not be legal in reverse order.  For example, $Enqueue(1) \cdot Dequeue(1)$ is legal, but $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not, because the first $Dequeue$ instance changed the state of the structure.  Formally, there exist a legal sequence $\rho$ and two (not necesssarily distinct) instances $op_1, op_2$, such that $\rho \cdot op_1$ and $\rho \cdot op_2$ are both legal, but $\rho \cdot op_1 \cdot op_2$ and $\rho \cdot op_2 \cdot op_1$ are not both legal.
 
-\begin{lemma}
+\begin{lemma}\label{fifolem:pairfreeLB}
   The worst-case cost of $Dequeue$ in our asynchronous, failure-free message passing model is at least $2d$.
 \end{lemma}
 
@@ -494,6 +494,8 @@ This runtime is optimal, as we can show by a simple indistinguishability argumen
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Asynchronous Out-of-Order Queues}
+
+We next move on to consider how we might be able to get around the lower bound in Lemma~\ref{fifolem:pairfreeLB}.  Relaxation has previously been useful for circumventing lower bounds 
 
 %%%%%%%%%%%%%%%
 \subsection{Description}
