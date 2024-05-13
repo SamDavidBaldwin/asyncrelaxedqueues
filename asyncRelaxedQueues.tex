@@ -4,6 +4,8 @@
 \algtext*{EndIf}
 \algtext*{EndFor}
 
+\usepackage{tikz}
+
 \theoremstyle{definition}
 \newtheorem{construction}{Construction}
 
@@ -321,7 +323,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
 \subsection{Correctness}
 In order to prove that this algorithm correctly implements the queue specification, we will consider an arbitrary, admissable timed run $R$.  We will first prove that all invocations have a matching return, so that we have complete operation instances.  We can then construct a total order of all operation instances in $R$ and prove that it respects real time order, making it a valid linearization, and is legal by the specification of a queue.  The core of the proof is in proving that when any process removes a particular $Dequeue$ instance's return value from its local replica of the queue, it deletes the same value as every other process does.  This means that all replicas will undergo the same series of operations, and allows us to prove that they continue removing the correct values.  To ensure that all processes remove the same element, we use the $safe$/$unsafe$ flags to leave elements for any $Dequeue$ instances which linearize earlier, but which that process is not ready to execute on its replica.
 
-\begin{lemma}
+\begin{lemma}\label{fifolem:responses}
   In $R$, every invocation has a matching response.
 \end{lemma}
 
@@ -426,12 +428,69 @@ This means that during local execution of a $Dequeue$ instance, each process alr
 \begin{proof}
   By Lemma~\ref{fifolem:realTimeOrder}, $\pi$ respects the real-time order of non-overlapping instance and by Lemma~\ref{fifolem:legal}, $\pi$ is a legal sequence of operation instance on a FIFO queue.  Thus, every run $R$ of Algorithm~\ref{alg:fifo} has a valid linearization, so it is a correct implementation.
 \end{proof}
-
-  
+ 
 
 %%%%%%%%%%%%%%%
 \subsection{Complexity}
 
+As observed in Lemma~\ref{fifolem:responses}, the algorithm returns to every invocation after it receives acknowledgements from every other process.  This takes up to $2d$ time, since the request message must reach each other process before they can send the acknowledgement, and the two non-concurrent messages can each take up to $d$ time.
+
+This runtime is optimal, as we can show by a simple indistinguishability argument, that any \emph{pair-free} operation must take at least $2d$ time from invocation to response.  A pair-free operation \cite{WangTalmageLeeWelch18} is one, like $Dequeue$, which both depends on and changes the state of the data structure, such that it is possible for a pair of adjacent instances to not be legal in reverse order.  For example, $Enqueue(1) \cdot Dequeue(1)$ is legal, but $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not, because the first $Dequeue$ instance changed the state of the structure.  Formally, there exist a legal sequence $\rho$ and two (not necesssarily distinct) instances $op_1, op_2$, such that $\rho \cdot op_1$ and $\rho \cdot op_2$ are both legal, but $\rho \cdot op_1 \cdot op_2$ and $\rho \cdot op_2 \cdot op_1$ are not both legal.
+
+\begin{lemma}
+  The worst-case cost of $Dequeue$ in our asynchronous, failure-free message passing model is at least $2d$.
+\end{lemma}
+
+\begin{proof}
+  We prove the claim by demonstrating two runs which are indistinguishable to the participating processes, but which require different linearizations, which cannot both be legal, because $Dequeue$ is pair-free.  In the following diagrams, each ray indicates the history of one process, with real time increasing to the right.  Curved edges between the processes' histories are messages, each starting at the earliest time processes could send information.
+
+  Assume some algorithm implements a queue with worst-case time of $Dequeue$ less than $2d$.
+
+  \begin{center}
+    \begin{tikzpicture}
+      \begin{scope}[xshift=-4cm]
+        \node (p0) at (-1,0){$p_0$};
+        \node (p1) at (-1,-3){$p_1$};
+        \draw[->] (p0.east) -- (5,0);
+        \draw[->] (p1.east) -- (5,-3);
+        
+        \node[draw,rectangle, minimum width=1cm,label=above:{$Deq_0$}] (d0) at (.5,0){};
+        \node[draw,rectangle, minimum width=1cm,label=below:{$Deq_1$}] (d1) at (1.75,-3){};
+
+        \draw[dashed] (1.125,.5) -- (1.125,-3.5);
+        
+        \path[-stealth] (d0.west) edge[bend left] (3,-3);
+        \path[-stealth] (3,-3) edge[bend right] (4.25,0);
+        \path[-stealth] (d1.west) edge[bend right] (3.5,0);
+        \path[-stealth] (3.5,0) edge[bend left] (4.5,-3);
+      \end{scope}
+
+      \begin{scope}[xshift=4cm]
+        \node (p0) at (-1,0){$p_0$};
+        \node (p1) at (-1,-3){$p_1$};
+        \draw[->] (p0.east) -- (5,0);
+        \draw[->] (p1.east) -- (5,-3);
+        
+        \node[draw,rectangle, minimum width=1cm,label=above:{$Deq_0$}] (d0) at (2,0){};
+        \node[draw,rectangle, minimum width=1cm,label=below:{$Deq_1$}] (d1) at (.5,-3){};
+        
+        \draw[dashed] (1.125,.5) -- (1.125,-3.5);
+
+        \path[-stealth] (d0.west) edge[bend left] (3,-3);
+        \path[-stealth] (3,-3) edge[bend right] (4.25,0);
+        \path[-stealth] (d1.west) edge[bend right] (3.5,0);
+        \path[-stealth] (3.5,0) edge[bend left] (4.5,-3);
+      \end{scope}
+    \end{tikzpicture}
+  \end{center}
+  In the run pictured on the left $Deq_0$ must be $Dequeue(1)$, since it return before $Deq_1$'s invocation, and thus the only valid linearization is $Enqueue(1) \cdot Deq_0 \cdot Deq_1$.  In the run on the right, which is indistinguishable to the two processes, since it differs only in the real time of the two $Dequeue$ invocations and processes have no knowledge of real time, the only valid linearization is $Enqueue(1) \cdot Deq_1 \cdot Deq_0$, so $Deq_1$ must be $Dequeue(1)$.  But $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not legal, so the assumed algorithm is impossible.  
+\end{proof}
+
+\begin{theorem}
+  Algorithm~\ref{alg:fifo} is an optimal implementation of a FIFO Queue in an asynchronous, failure-free system.
+\end{theorem}
+
+  
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Asynchronous Out-of-Order Queues}
