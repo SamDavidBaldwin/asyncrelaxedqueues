@@ -180,7 +180,7 @@ We define two orders on timestamp vectors.  For any two vector timestamps $v_i$ 
 Each process maintains a local augmented minimum priority queue keyed on lexicographic timestamp order.  This priority queue can perform three operations: $insert(value, v_{clock})$, $get(position)$, and $remove(value)$.  The $insert$ operation adds the value to the queue with $v_{clock}$ as a priority.  The $get(position)$ function allows the user to peek into the element at the passed position (returns the element with the $position$th-lowest timestamp) without removing a value from the queue.  The $remove(value)$ function removes the specific value passed to it from the queue, independent of priority order.  Ordering elements in FIFO order is not a straight-forward task in a distributed setting since defining which invocation happened first is well defined for concurrent operation instances.  We will use lexicographic timestamp order for our linearization, so using a priority queue keyed on lexicographic timestamp order allows us to ensure each process' local view matches that of the linearization order.
 
 %%%%%%%%%%
-\subsubsection{Confirmation Lists}
+\subsubsection{Confirmation Lists}\label{sec:confLists}
 The main algorithmic idea that allows us to handle asynchrony is a structure we call \emph{Confirmation Lists}.  Each process uses these lists to track acknowledgments from other processes for a given $Dequeue$ instance.  When aprocess $p_j$ receives a $Dequeue$ request message from another process $p_i$, $p_j$ will either declare that $Dequeue$ instance $unsafe$ or $safe$ depending on whether $p_j$ has or has not, respectively, invoked a $Dequeue$ intance with smaller (lexicographically)\footnote{\textcolor{red}{TODO: make sure I got the right ordering here}} timestamp.  $p_j$ will then send a its response to all processes, declaring its view of the $Dequeue$ instance as $safe$ or $unsafe$. These $safe$/$unsafe$ messages also contain the invoking process's id, the responding process' id, and the invocation's vector clock timestamp.  \textcolor{red}{TODO: mention invoation timestamps earlier somewhere}  The idea is that, if $p_j$ is already dequeueing, it will mark $p_i$'s $Dequeue$ as $unsafe$ and broadcast this, to ensure that all processes execute $p_j$'s $Dequeue$ instance on their local copy before $p_i$'s $Dequeue$ instance.
 
 To track these $safe$/$unsafe$ responses, when a process first receives information about a $Dequeue$ invocation, it creates a \emph{confirmation list} object, keyed to the timestamp of the $Dequeue$ invocation and stores that object.  This object contains the timestamp that distinguishes it from other confirmation lists, then an array of length $n$, to track confirmations from each process.  A process can learn about an invocation by invoking a $Dequeue$ itself, from a $Dequeue$ request message directly from the invoking process, or from a third-party process' response message to a $Dequeue$ invocation.  A confirmation list's array is empty at creation, except for a $safe$ in the position corresponding to the invoking process.  The list fills as the process receives $safe$/$unsafe$ responses to the $Dequeue$ request, placing each in the position corresponding to the responding process.  If a process is creating a confirmation list on receiving a response before the initial $Dequeue$ request, it can place that response in the position corresponding to the sender immediately on creating the confirmation list.
@@ -192,21 +192,30 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
 %%%%%%%%%%%%%%%
 \subsection{Algorithm}
 
+This algorithm is based on that of Talmage and Welch \cite{TalmageWelch14}.  Instead of using timers based on knowledge of message delays, we here use round-trip messages to indicate when processes can apply operation instances to their local replicas of the shared queue.  As discussed, we also use vector clocks to order events.
+
+We first outline a number of local variables and sequential functions used by our local data structures.  We discussed $PendingDequeues$ and confirmation lists, in Section~\ref{sec:confLists} above.
+\begin{itemize}
+\item $v_i$: Process $p_i$'s vector clock, an array with one entry for each process.
+\item $lQueue$: Each process' local replica of the shared queue.
+\item $lQueue.insertByTS(val, inv, ts)$: Adds an entry to $lQueue$, sorting by lexicographic timestamp order on $ts$, and saving the value $val$ along with $ts$ and the invoking process id $inv$.
+\item $lQueue.dequeue(ts)$: Returns and removes the oldest element in $lQueue$ with timestamp smaller than $ts$, $\bot$ if there is none.
+\end{itemize}
 % TODO: Define variables, structures, functions.
-% Specifically: lQueue.deqByIndex(pos,ts) does not return a value with later timestamp than ts, instead returning the element at index pos in the sublist of elements with timestamp preceding ts, or \bot if none such exists.
+% Specifically: 
 
 \begin{algorithm}
-  \caption{Code for each process $p_i$ to implement a Queue, Handlers for $Enqueue$}\label{alg:fifo}
+  \caption{Code for each process $p_i$ to implement a Queue}\label{alg:fifo}
   \begin{algorithmic}[1]
     \Function{Enqueue}{$val$}\label{fifoline:invEnq}
       \State $EnqResponseCount = 0$ \Comment{Count responses to this invocation}
-      \State $Enq_{ts} = incrementTS()$ \label{fifoline:enqTS} \Comment{Increment local vector clock, read instance's timestamp}
+      \State $Enq_{ts} = updateTS()$ \label{fifoline:enqTS} \Comment{Increment local vector clock, read instance's timestamp}
       \State send $(EnqReq, val, Enq_{ts}, i)$ to all processes\label{fifoline:sendEnqReq}
     \EndFunction
 
     \Function{Receive}{$EnqReq, val, inv, Enq_{ts}$} from $p_{inv}$
       \State $updateTS(Enq_{ts})$ \label{fifoline:enqReqTSUpdate} \Comment{Update local vector clock by invocation's timestamp}
-      \State $lQueue.insertByTS$($val, inv, Enq_{ts}$)\label{fifoline:executeEnq} \Comment{Locally execute the $Enqueue$ instance}
+      \State $lQueue.insertByTS(val, inv, Enq_{ts})$\label{fifoline:executeEnq} \Comment{Locally execute the $Enqueue$ instance}
       \State send $(EnqAck, i)$ to $p_{inv}$ \label{fifoline:sendEnqAck} \Comment{Acknowledge receipt of the invocation}
     \EndFunction
 
@@ -216,53 +225,36 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
         \Return $EnqResponse$ to user\label{fifoline:enqReturn} 
       \EndIf
     \EndFunction \label{fifoline:finishEnq}
-    \Statex
-    \Statex \emph{(continues below)}
-    \algstore{fifoLines}
-  \end{algorithmic}
-\end{algorithm}
-
-\begin{algorithm}
-  \caption{Algorithm~\ref{alg:fifo} continued: Handlers for $Dequeue$}
-  \begin{algorithmic}[1]
-    \algrestore{fifoLines}
+%
     \Function{Dequeue}{}
-      \State $Deq_{ts} = incrementTS()$ \Comment{Increment local vector clock, read instance's timestamp}\label{fifoline:deqTS}
-%      \State $activeDeqTS = Deq_{ts}$ \Comment{Track active $Dequeue$ instance's timestamp}
+      \State $Deq_{ts} = updateTS()$ \Comment{Increment local vector clock, read instance's timestamp}\label{fifoline:deqTS}
       \State send $(DeqReq, Deq_{ts}, i)$ to all processes \label{fifoline:sendDeqReq}
     \EndFunction
-
+%
     \Function{Receive}{$(DeqReq, Deq_{ts}, inv)$ from $p_{inv}$}
     \State $updateTS(Deq_{ts})$ \label{fifoline:deqReqTSUpdate}
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
-      \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{inv}$))\label{fifoline:savePendingDeq}
+      \State $PendingDequeues.insertByTS(createList(Deq_{ts}, p_{inv}$))\label{fifoline:savePendingDeq}
       \EndIf
-%      \If{$activeDeqTS$ is not $null$ and $activeDeqTS \prec Deq_{ts}$} \Comment{If we have a preceding active $Dequeue$ instance, indicate $unsafe$, else indicate $safe$} \Comment{\red{This will collapse to a $DeqAck$ if I'm right about safe/unsafe being redundant}}
-%        \State $safetyFlag = Unsafe$
-%      \Else
-%        \State $safetyFlag = Safe$
-%      \EndIf
-      %      \State send $(safetyFlag, Deq_{ts}, p_{inv}, i)$ to all processes \label{fifoline:sendSafetyFlag}\label{fifoline:sendDeqAck}
       \State send $(DeqAck, Deq_{ts}, p_{inv}, i)$ to all processes \label{fifoline:sendSafetyFlag}\label{fifoline:sendDeqAck}
     \EndFunction
-
-%    \Function{Receive}{$(safetyFlag, Deq_{ts}, p_{inv}, j)$ from $p_j$}
+%
     \Function{Receive}{$(DeqAck, Deq_{ts}, p_{inv}, j)$ from $p_j$}
       \If{$Deq_{ts}$ not in $PendingDequeues$}
         \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{inv}))$
       \EndIf
-      \State Define $currentConfList$ as the confirmation list in $PendingDequeues$ which has $ts == Deq_{ts}$\Comment{\red{Cole/Sam: I realized this needs to happen before propagate $EarlierResponses()$. Verify this makes sense and works.}}
-%          \State $confirmationList.responses[j] = safetyFlag$
+      \State Define $currentConfList$ as the confirmation list in $PendingDequeues$ which has $ts == Deq_{ts}$
       \State $currentConfList.responses[j] = True$ \label{fifoline:setResponse}
       \State $propagateEarlierResponses(PendingDequeues, Deq_{ts}, j)$ \label{fifoline:propagateEarlier} \Comment{Enable lower-timestamp pending $Dequeue$ instances to execute}
+
       \For{each $confirmationList$ in $PendingDequeues$, in increasing lexicographic timestamp order}
         \If{all $response$s in $confirmationList$ are $True$}\label{fifoline:fullConfList}
           \State $ret = lQueue.dequeue(Deq_{ts})$\label{fifoline:chooseDeqValue} \Comment{Locally execute the $Dequeue$ instance, ignoring elements with later timestamps} 
-%          \State $updateUnsafes(PendingDequeues, index)$ \Comment{\red{What happens here when safe/unsafe is gone?}}
         \State delete $confirmationList$ from $PendingDequeues$
         \If{$p_i == p_{inv}$} \Return $ret$ to user \label{fifoline:deqReturn} \EndIf \Comment{The invoking process responds to the user}
       \EndIf 
       \EndFor
+
       \EndFunction
       \Statex
       \Statex \emph{(continues below)}
@@ -271,7 +263,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
   \end{algorithmic}
 \end{algorithm}
 
-\begin{algorithm}
+\begin{algorithm}[t]
   \caption{Algorithm~\ref{alg:fifo} continued: Helper functions}
   \begin{algorithmic}[1]
     \algrestore{fifoLines}
@@ -287,13 +279,6 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
       \EndFor  
     \EndFunction
 %
-%    \Function{updateUnsafes}{$PendingDequeues, startIndex$} \Comment{When locally executing an instance, no longer need to set aside values for it, so update count for all later pending instances}
-%      \State $invoker = PendingDequeues[startIndex].invoker$
-%      \For{$index = startIndex$ upto $n$} \Comment{\red{Cole/Sam:Didn't this need to break if we saw another instance from the same process?}}
-%      \State $PendingDequeues[index].responses[invoker] = safe$  
-%      \EndFor
-%    \EndFunction
-%
     \Function{updateTS}{$v_j$}
       \If{$v_j$ is empty}
         \State $v_i[i] \pluseq 1$
@@ -307,9 +292,8 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
 %
     \Function{createList}{$Deq_{ts}, p_{invoker}$}
       \State create a new confirmation list $ConfirmationList$
-      \State $ConfirmationList.responses = [0,0,...,0]$ \Comment{A list of $n$ 0s}
+      \State $ConfirmationList.responses = [0,0,...,0]$ \Comment{An array of $n$ 0s}
       \State $ConfirmationList.ts = Deq_{ts}$ \Comment{A vector clock timestamp}
-%      \State $ConfirmationList.handled = False$ \Comment{True once locally executed}
       \State $ConfirmationList.invoker = p_{invoker}$ \Comment{The invoking process of the Dequeue}
       \State return $ConfirmationList$
     \EndFunction
@@ -387,19 +371,6 @@ This means that during local execution of a $Dequeue$ instance, each process has
 \end{proof}
 
 
-%
-% Note: we proved legality without this, so I don't think it's needed.
-%\begin{lemma}
-%  The local views of the queues are equivalent at the time of $Dequeue$.
-%\end{lemma}
-
-%\begin{proof}
-%  For this algorithm, we will consider the entire history of the execution, such that all elements that were at one point in the queue are considered a part of the prefix of the queue. Once an element is dequeued, that element remains a part of the prefix, but no longer can be accessed, and is marked unavailable for dequeues.
-  
-%Though processes may be in different local states with respect to active enqueues that they may have not recieved, the prefix of all local views up to the timestamp of the local execution of a dequeue will be the same. This is due to the fact that there is an agreed upon order for sorting the enqueues, and as such all processes will agree on the order. Furthermore, at the time of a dequeue, we can confirm that a given process will have heard of all prior enqueues. This is due to the fact that in order to locally execute a dequeue, a given process will have to have heard all messages with a lexicographically smaller timestamp to that dequeue, via the Confirmation List structure. This is due to the fact that in order to complete a dequeue execution, the Confirmation List strucuture must be filled, meaning that it must have recieved a message responding to the invocation from every other process in the system. Given that a message can only be acted upon in the case that it is the oldest unactioned message in the communication history between the two processes, we can be certain that there are no prior inter-process messages from a process which has a filled index in a confirmation list. The nature of the communication between processes being FIFO results in the knowledge that there cannot have been earlier messages that have gone unrecieved if a later message has been recieved and therefore, if a process is actively completing a dequeue invocation, at the point of that local execution, every message with a smaller timestamp has been received. Thus, we can formally state that at such a point, the prefix of all messages and queue states are equal across all processes.
-%\end{proof}
-
-
 \begin{theorem}
   Algorithm~\ref{alg:fifo} correctly implements a FIFO queue.
 \end{theorem}
@@ -427,7 +398,7 @@ This runtime is optimal, as we can show by a simple indistinguishability argumen
 
   \begin{center}
     \begin{tikzpicture}
-      \begin{scope}[xshift=-4cm]
+      \begin{scope}[xshift=-4cm,scale=.7]
         \node (p0) at (-1,0){$p_0$};
         \node (p1) at (-1,-3){$p_1$};
         \draw[->] (p0.east) -- (5,0);
@@ -444,7 +415,7 @@ This runtime is optimal, as we can show by a simple indistinguishability argumen
         \path[-stealth] (3.5,0) edge[bend left] (4.5,-3);
       \end{scope}
 
-      \begin{scope}[xshift=4cm]
+      \begin{scope}[xshift=4cm,scale=.7]
         \node (p0) at (-1,0){$p_0$};
         \node (p1) at (-1,-3){$p_1$};
         \draw[->] (p0.east) -- (5,0);
@@ -462,7 +433,7 @@ This runtime is optimal, as we can show by a simple indistinguishability argumen
       \end{scope}
     \end{tikzpicture}
   \end{center}
-  In the run pictured on the left $Deq_0$ must be $Dequeue(1)$, since it return before $Deq_1$'s invocation, and thus the only valid linearization is $Enqueue(1) \cdot Deq_0 \cdot Deq_1$.  In the run on the right, which is indistinguishable to the two processes, since it differs only in the real time of the two $Dequeue$ invocations and processes have no knowledge of real time, the only valid linearization is $Enqueue(1) \cdot Deq_1 \cdot Deq_0$, so $Deq_1$ must be $Dequeue(1)$.  But $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not legal, so the assumed algorithm is impossible.  
+  In the run pictured on the left, $Deq_0$ must be $Dequeue(1)$, since it return before $Deq_1$'s invocation, and thus the only valid linearization is $Enqueue(1) \cdot Deq_0 \cdot Deq_1$.  In the run on the right, which is indistinguishable to the two processes, since it differs only in the real time of the two $Dequeue$ invocations and processes have no knowledge of real time, the only valid linearization is $Enqueue(1) \cdot Deq_1 \cdot Deq_0$, so $Deq_1$ must be $Dequeue(1)$.  But $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not legal, so the assumed algorithm is impossible.  
 \end{proof}
 
 \begin{theorem}
@@ -489,15 +460,22 @@ The process of labeling is done by guaranteeing that processes have the same vie
 %%%%%%%%%%%%%%%
 \subsection{Algorithm}
 
-Because this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portions that are identical to those in that algorithm.  For example, the code for handling $Enqueue$ is exactly the same as that on lines~\ref{fifoline:invEnq}-\ref{fifoline:finishEnq} of Algorithm~\ref{alg:fifo}, so we omit it here.  Any code not presented here is identical to that above.  The code for handling $Dequeue$ is similar to what we had before, but differentiates fast and slow instances, so we present it here. 
+Because this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portions that are identical to those in that algorithm.  For example, the code for handling $Enqueue$ instances is exactly the same as that on lines~\ref{fifoline:invEnq}-\ref{fifoline:finishEnq} of Algorithm~\ref{alg:fifo}, so we omit it here, as well as the helper functions.  The code for handling $Dequeue$ is similar that above, but differentiates fast and slow instances, so we present it here. 
 
-% TODO: Define behavior of deqUnlabeled(ts): return oldest-timestamped element in lQueue which has timestamp < ts
+In addition to the functions we used before, we add the following functions, which help with labeling elements for fast $Dequeue$:
+\begin{itemize}
+\item $lQueue.deqByLabel(p)$: Return and remove the oldest element in $lQueue$ which is labeled for process $p$.
+\item $lQueue.deqUnlabeled(ts)$: Return and remove the oldest element in $lQueue$ which has timestamp less than $ts$.
+\item $lQueue.unlabeledSize()$: Return the number of unlabeled elements in $lQueue$.
+\item $lQueue.labelOldest(p,x)$: Label the $x$ oldest elements in $lQueue$ for process $p$.
+\end{itemize}
+  
 
 \begin{algorithm}
   \caption{Queue with $k$-Out-of-Order Relaxed $Dequeue$: Handlers for $Dequeue$}\label{alg:relaxed}
   \begin{algorithmic}[1]
     \Function{Dequeue}{}
-      \State $Deq_{ts} = incrementTS()$
+      \State $Deq_{ts} = updateTS()$
       \If {$localQueue.peekByLabel(p_{i}) \neq \bot$}\label{oooline:checkFast}
         \State $ret = localQueue.deqByLabel(p_i)$ \label{oooline:fastDeq}
         \State send $(Deq_f, ret, i, Deq_{ts})$ to all processes
@@ -665,24 +643,23 @@ We can further observe that the code never removes a label, so once processes la
   \end{itemize}
 \end{proof}
 
-  %In the case where $k > n$, since the number of messages required to have a successful dequeue in bounds is less
-  than the number of permitted dequeues ooo, dequeues can be instant. This information is based off of PUT THE PAPER NAME HERE which utilizes prior labeling of elements within the queue structure with a process that is allowed to instantly dequeue it.  Given each element is distinct and can only be dequeued once, the labeling must be distinct, in that each process agrees on the labelling that a given value in the queue receives. Whereas in PAPER NAME AGAIN this is done via a process of synchronization of clocks, we will be adjusting the labelling to occur at points when we can guarantee that the view of distinct processes agree, at the point of dequeueing. As we have discussed, at the point in which a process dequeues, the information prior to that dequeue, the prefix to the execution $\rho$ to that point will be the same for all processes. Given that all processes will agree on a select set of information at the same relative point in their executions, we can treat this as a sort of synchronization, and make decisions as to the labelling of elements at this point.
-
-%For this relaxation to still follow the established queue definition, it must only return elements once. Therefore, we must prove that a) Each process dequeues each element only once and b) that elements removed are within the first $n$ elements within the queue.  Given that the labeling is agreed upon by every process, and done by calculations with an invariant, we can state that each process will agree on the elements that are ”fast dequeued” with respect to which process is allowed to ”fast dequeue” them. Given that processes agree which elements are ”reserved” for a fast dequeue by another process, we can furthermore state that a process will not slow dequeue an element that has been marked.
-
-%Thus, elements can not be dequeued by processes that they have not been marked for, so we can guarantee that they will ONLY be dequeued by the assigned process.  By thje definition of the algorithm on line GIVE ME THE LINE NUMBER HERE COLE we can also state that the second criterion is satisfied, as at a point where a given process will attempt to fast dequeue, the position of the element that is attempting to be fast dequeued is checked, and the process is only allowed to execute the operation in the case where the element is within the legal bounds for dequeueing.
-
-
-%%%%%%%%%%
-\subsubsection{Less Relaxation than Number of Processes}
-In the case in which the X of out of order is less than the number of processes,there isn’t an order of magnitude benefit to relaxation. The benefit of relaxation is that rather than forcing a wait of 2 times the maximum message delay, the wait can be cut to 2 times the (n-x+1)th slowest message delay. In a close connection system, the benefit is minimal as the difference between the max message delay and the (n-x+1)th is minimal, but in an actualized system with nonstandard message delays, this could have some substantial benefits.
+\begin{theorem}
+  Algorithm~\ref{alg:relaxed} is a correct implementation of a queue with $k$-Out-of-Order relaxed $Dequeue$.
+\end{theorem}
 
 %%%%%%%%%%%%%%%
 \subsection{Complexity}
 
+
+
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Conclusion}
+
+%%%%%%%%%%
+\subsection{Less Relaxation than Number of Processes}
+In the case in which the X of out of order is less than the number of processes,there isn’t an order of magnitude benefit to relaxation. The benefit of relaxation is that rather than forcing a wait of 2 times the maximum message delay, the wait can be cut to 2 times the (n-x+1)th slowest message delay. In a close connection system, the benefit is minimal as the difference between the max message delay and the (n-x+1)th is minimal, but in an actualized system with nonstandard message delays, this could have some substantial benefits.
+
 
 \bibliography{refs.bib}
 
