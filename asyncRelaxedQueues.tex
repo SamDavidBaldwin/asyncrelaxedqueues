@@ -375,7 +375,7 @@ This means that during local execution of a $Dequeue$ instance, each process has
 
 As observed in Lemma~\ref{fifolem:responses}, the algorithm returns to every invocation after it receives acknowledgements from every other process.  This takes up to $2d$ time, since the request message must reach each other process before they can send the acknowledgement, and the two non-concurrent messages can each take up to $d$ time.
 
-This runtime is optimal, as we can show by a simple indistinguishability argument, that any \emph{pair-free} operation must take at least $2d$ time from invocation to response.  A pair-free operation \cite{WangTalmageLeeWelch18} is one, like $Dequeue$, which both depends on and changes the state of the data structure, such that it is possible for a pair of adjacent instances to not be legal in reverse order.  For example, $Enqueue(1) \cdot Dequeue(1)$ is legal, but $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not, because the first $Dequeue$ instance changed the state of the structure.  Formally, there exist a legal sequence $\rho$ and two (not necesssarily distinct) instances $op_1, op_2$, such that $\rho \cdot op_1$ and $\rho \cdot op_2$ are both legal, but $\rho \cdot op_1 \cdot op_2$ and $\rho \cdot op_2 \cdot op_1$ are not both legal.
+This runtime is optimal, as we can show by a simple indistinguishability argument, that linearizable implementatino of $Dequeue$ must take at least $2d$ time from invocation to response.  The key fact is that $Dequeue$ is \emph{pair-free}.  A pair-free operation \cite{WangTalmageLeeWelch18} is one which both depends on and changes the state of the data structure, such that it is possible for a pair of adjacent instances to not be legal in reverse order.  For example, $Enqueue(1) \cdot Dequeue(1)$ is legal, but $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not, because the first $Dequeue$ instance changed the state of the structure.  Formally, there exist a legal sequence $\rho$ and two (not necesssarily distinct) instances $op_1, op_2$, such that $\rho \cdot op_1$ and $\rho \cdot op_2$ are both legal, but $\rho \cdot op_1 \cdot op_2$ and $\rho \cdot op_2 \cdot op_1$ are not both legal.
 
 \begin{lemma}\label{fifolem:pairfreeLB}
   The worst-case cost of $Dequeue$ in our asynchronous, failure-free message passing model is at least $2d$.
@@ -429,6 +429,8 @@ This runtime is optimal, as we can show by a simple indistinguishability argumen
 \begin{theorem}
   Algorithm~\ref{alg:fifo} is an optimal implementation of a FIFO Queue in an asynchronous, failure-free system.
 \end{theorem}
+
+This result intuitively seems like it out to apply to other pair-free operations, but generalizing formally is not quite so straightforward.  The proof relies on putting the structure in a state where there is only a single correct next return value, then not allowing two different processes to see that the other is executing the operation.  In general, showing that this initial state is reachable is more complicated.  As we see in the next section, while a $k$-Out-of-Order relaxed $Dequeue$ is still pair-free, it is much less subject to states with only a single correct next return value.   
 
   
 %%%%%%%%%%%%%%%
@@ -640,7 +642,9 @@ We can further observe that the code never removes a label, so once processes la
 %%%%%%%%%%%%%%%
 \subsection{Complexity}
 
+Since each operation instance returns to the user in or before local execution, which occurs no later than after recieved acknowledgments from every process, sent when they first receive a message about the invocation, the worst-case response time of each operation in Algorithm~\ref{alg:relaxed} is $2d$.  As mentioned above, we do not know whether we can improve this worst-case lower bound, since the $k$-Out-of-Order relaxed $Dequeue$ is still pair-free.
 
+However, in many typical scenarios, most $Dequeue$ instances will return with no delay at all.  Specifically, in a \emph{heavily-loaded} run, which starts with at least $k$ $Enqueue$ instances, and maintains at least $k$ more $Enqueue$ than $Dequeue$ instances, only one in every $\lfloor k/n\rfloor$ $Dequeue$ instances will take $2d$.  Thus, a typical total cost of $m$ $Dequeue$ instances in a heavily-loaded run would be $\left\lceil\frac{m}{\lfloor k/n\rfloor}\right\rceil(2d)$.  This is inversely proportional to the degree of relaxation $k$, so we can see that increasing relaxation allows us to reduce the total cost at will.  At $k=2n$, we roughly halve the total runtime.  At $k=3n$, it is a third of that of an unrelaxed queue, and so on.  Thus, relaxation allows us to practically circumvent lower bounds on the performance of shared data structures, via a tunable tradeoff between ordering guarantees and performance.
 
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
