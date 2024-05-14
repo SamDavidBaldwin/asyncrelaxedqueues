@@ -159,7 +159,7 @@ We can now formally define the relaxed queue we implement in this paper.  Intuit
 
 We are interested in implementations which satisfy \emph{linearizability} \cite{HerlihyWing90}.  Linearizability is a consistency condition which describes how concurrent executions of a data structure relate to the sequential specification of the ADT the structure implements.  Specifically, linearizability requires that operation response values be such that there is a total order of all operation instances in the execution which is legal according to the ADT and which respects the real-time order of instances which do not overlap in real time.  That is, if one instance returns before, in real time, another's invocation, that one which returned first must be ordered first.  This condition provides behavior that matches that we intuitively expect systems to have, disallowing inversions in real time.  Linearizability also has the advantage of being composable, meaning that running multiple linearizable objects in the same execution will necessarily produce an overall linearizable execution.  Linearizability is the strongest consistency condition we might satisfy, so our upper bounds translate to any other consistency condition one might use.
 
-% TODO: Define run, timed run, admissible (must be infinite), linearization, 
+% TODO: Define run, timed run, admissible (must be infinite), linearization, single pending instance per process
 
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
@@ -353,7 +353,7 @@ Next, we consider how each process locally executes each $Dequeue$ instance.  We
 \begin{proof}
   By line~\ref{fifoline:fullConfList}, $p_i$ will not locally execute $op$ until it has received a $DeqAck$ for $op$ from every process, either for $op$ or for a $Dequeue$ instance with larger timestamp than $op$ (line~\ref{fifoline:propagateEarlier}).  But when any process sends a $DeqAck$, on line~\ref{fifoline:sendDeqAck}, it has updated its timestamp to be larger than $op$'s timestamp.  Thus, any instance invoked at that process after that point will have a totally, and thus lexicographically, larger timestamp than $op$.  This means that any instance $op'$ invoked at $p_j$ with a lexicographically smaller timestamp than $op$ must have been invoked before its invoking process sent a $DeqAck$ for $op$ or any later $Dequeue$ instance.
 
-  By FIFO message order, $p_j$'s request message for $op'$, which it sends on line~\ref{fifoline:sendEnqReq} or \ref{fifoline:sendDeqReq}, would have arrived at $p_i$ before the $DeqAck$ for $op$ from $p_j$, and $p_i$ would have either locally executed $op'$ on line~\ref{fifoline:executeEnq} if it was an $Enqueue$ instance, or put it in $pendingDequeues$ on line~\ref{fifoline:savePendingDeq} if it was a $Dequeue$ instance.  If it was a $Dequeue$ instance, the only time $p_i$ could remove $op'$ from $pendingDequeues$ is in lines~\ref{fifoline:fullConfList}-\ref{fifoline:deqReturn}, when $p_i$ locally executes $op'$.  Thus, when $p_i$ locally executes $op$, it must have already either locally executed $op'$, or have it in $pendingDequeues$.
+  By FIFO message order, $p_j$'s request message for $op'$, which it sends on line~\ref{fifoline:sendEnqReq} or \ref{fifoline:sendDeqReq}, would have arrived at $p_i$ before the $DeqAck$ for $op$ from $p_j$, and $p_i$ would have either locally executed $op'$ on line~\ref{fifoline:executeEnq} if it was an $Enqueue$ instance, or put it in $PendingDequeues$ on line~\ref{fifoline:savePendingDeq} if it was a $Dequeue$ instance.  If it was a $Dequeue$ instance, the only time $p_i$ could remove $op'$ from $PendingDequeues$ is in lines~\ref{fifoline:fullConfList}-\ref{fifoline:deqReturn}, when $p_i$ locally executes $op'$.  Thus, when $p_i$ locally executes $op$, it must have already either locally executed $op'$, or have it in $PendingDequeues$.
 
   But $p_i$ can only locally execute $op$ when its confirmation list is full, and any time $p_i$ sets a response entry in $op$'s confirmation list to true on line~\ref{fifoline:setResponse}, it then propagates responses to all pending $Dequeue$ instances with smaller timestamps on line~\ref{fifoline:propagateEarlier}.  Thus, if $p_i$ has received a response from every process for $op$, it has also marked every $response$ cell in the confirmation list for $op'$, and will locally execute $op'$ before $op$.
 \end{proof}
@@ -491,6 +491,8 @@ The process of labeling is done by guaranteeing that processes have the same vie
 
 Because this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portions that are identical to those in that algorithm.  For example, the code for handling $Enqueue$ is exactly the same as that on lines~\ref{fifoline:invEnq}-\ref{fifoline:finishEnq} of Algorithm~\ref{alg:fifo}, so we omit it here.  Any code not presented here is identical to that above.  The code for handling $Dequeue$ is similar to what we had before, but differentiates fast and slow instances, so we present it here. 
 
+% TODO: Define behavior of deqUnlabeled(ts): return oldest-timestamped element in lQueue which has timestamp < ts
+
 \begin{algorithm}
   \caption{Queue with $k$-Out-of-Order Relaxed $Dequeue$: Handlers for $Dequeue$}\label{alg:relaxed}
   \begin{algorithmic}[1]
@@ -530,7 +532,7 @@ Because this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portio
             \Else
               \State $ret = lQueue.deqUnlabeled(Deq_{ts})$ \label{oooline:sDeqChooseUnlabeled}
             \EndIf
-            \State $labelElements(p_{inv})$
+            \State $labelElements(p_{inv})$\label{oooline:label}
             \If{$p_i == p_{inv}$}
               \State \Return $ret$
             \EndIf
@@ -541,7 +543,7 @@ Because this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portio
 %
       \Function{labelElements}{$p_j$} from \cite{TalmageWelch14}
       \State $y = lQueue.unlabeledSize()$
-      \State $lQueue.labelOldest(p_j,x)$, where $x = \min\{\lfloor k/n\rfloor, y\}$
+      \State $lQueue.labelOldest(p_j,x)$, where $x = \min\{\lfloor k/n\rfloor, y\}$\label{oooline:labelOldest}
       \EndFunction
   \end{algorithmic}
 \end{algorithm}
@@ -620,22 +622,14 @@ Now that we have a linearization of all instances in our run, we need to show th
   When a process $p_i$ locally executes any $Dequeue$ instance $op$, for any instance $op'$ with a lexicographically smaller timestamp than $op$, $p_i$ has previously locally executed $op'$.
 \end{lemma}
 
-\begin{corollary}
+\begin{corollary}\label{ooolem:localExecOrder}
   Each process locally executes all $Dequeue$ instances in increasing lexicographic timestamp order.
 \end{corollary}
 
-We can now prove the invariants of our labeling scheme that enable us to argue that all $Dequeue$ instances return legal values.
+We can now prove the following invariant of our labeling scheme that will enable us to argue that all $Dequeue$ instances return legal values.
 
-\begin{lemma}
-  If one process labels an element $x$ with $p_i$, then every process will label it $p_i$.
-\end{lemma}
-
-\begin{proof}
-
-\end{proof}
-
-\begin{lemma}
-  When an element $x$ is labeled $p_i$, no other process will return $x$ to a $Dequeue$ it invoked.
+\begin{lemma}\label{ooolem:labelOwner}
+  Once an element $x$ is labeled $p_i$, no other process will return $x$ to a $Dequeue$ it invoked.
 \end{lemma}
 
 \begin{proof}
@@ -649,11 +643,25 @@ We can further observe that the code never removes a label, so once processes la
 \end{lemma}
 
 \begin{proof}
-  We proceed by induction on $\pi$.  The empty sequence is legal.  We assume that for an arbitrary prefix $\rho \cdot op$ of $\pi$, $\rho$ is legal and will show that $\rho \cdot op$ is also legal.  Let $p_i$ be $op$'s invoking process and proceed by cases on $op$'s operation type:
+  We proceed by induction on $\pi$ and prove the following claim in tandem with and to aid in the primary result:
+
+  \begin{claim}\label{ooolem:safeLabels}
+    Any $Dequeue$ instance which labels elements during its local execution (line~\ref{oooline:label}) labels only elements which are among the arguments of the $k$ oldest $Enqueue$ instances in the prefix of $\pi$ ending with that $Dequeue$ instance.
+  \end{claim}
+
+  The empty sequence is legal.  We assume that for an arbitrary prefix $\rho \cdot op$ of $\pi$, $\rho$ is legal and Claim~\ref{ooolem:safeLabels} holds for all instances in $\rho$.  We will show that $\rho \cdot op$ is also legal and any element $op$ labels is the argument to one of the first $k$ unmatched $Enqueue$ instances in $\rho \cdot op$.  Let $p_i$ be $op$'s invoking process and proceed by cases on $op$'s operation type:
   \begin{itemize}
   \item $op$ is an $Enqueue$ instance.  Since $Enqueue$ has no return value, $\rho \cdot op$ is always legal.
-  \item $op$ is a slow $Dequeue$ instance, $op = Dequeue(-,ret)$.  Assume first that $ret \neq \bot$.  $p_i$ chose $ret$ from its $lQueue$ in either line~\ref{oooline:sDeqChooseLabeled} or \ref{oooline:sDeqChooseUnlabeled}.  
-  \item $op$ is a fast $Dequeue$ instance.
+%
+  \item $op$ is a slow $Dequeue$ instance, $op = Dequeue(-,ret)$.  $p_i$ chose $ret$ from its $lQueue$ in either line~\ref{oooline:sDeqChooseLabeled} or \ref{oooline:sDeqChooseUnlabeled}.  If it chose it in line~\ref{oooline:sDeqChooseLabeled}, then it was a labeled element, which means that it was the argument of one of the first $k$ unmatched $Enqueue$ instances in a prefix of $\pi$ before some previous slow $Dequeue$ instance.  By Lemma~\ref{ooolem:labelOwner}, no other process could have returned $ret$, and $p_i$ removes it from its $lQueue$ before returning it, so could not have returned it as the return value of another $Dequeue$ instace, and thus $ret$ is still the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho$.
+
+    If $p_i$ chose $ret$ in line~\ref{oooline:sDeqChooseUnlabeled} and $ret \neq \bot$, then we know that it chose the argument of an unmatched $Enqueue$ instance in $\rho$, since the algorithm puts only $Enqueue$ arguments in $lQueue$, line~\ref{oooline:sDeqChooseUnlabeled} only returns values with timetamps below $ts(op)$, and Corollary~\ref{ooolem:localExecOrder} implies that $p_i$ has already locally executed any $Dequeue$ instance in $\rho$, removing its return value.  Further, $deqUnlabeled$ chooses the oldest eligible element currently in $lQueue$.  By line~\ref{oooline:labelOldest}, no more than $\lfloor k/n\rfloor$ elements are labeled for each process and there are no elements labeled $p_i$, or it would select a return value in line~\ref{oooline:sDeqChooseLabeled} instead, there are fewer than $k$ labeled elements in $lQueue$, so the oldest unlabeled element is among the $k$ oldest elements in $lQueue$ and thus the argument of one of the $k$ oldest $Enqueue$ instances in $\rho$, and $\rho \cdot op$ is legal.
+
+    If $ret = \bot$, then there were no unlabeled elements in $lQueue$ with timestamp smaller than $ts(op)$, which means there are fewer than $k$ unmatched $Enqueue$ instances in $\rho$, and $\rho \cdot op$ is legal.  By Corollary~\ref{ooolem:localExecOrder}, every process locally executes all $Dequeue$ instances in the same order, applying the same deterministic logic.  The only possible differences are that any $p_j$ may have fewer elements labeled for itself, as it has returned them to fast $Dequeue$ instances which it has not yet locally executed.  These instances do not affect the choice of return value for a slow $Dequeue$, though, so each $p_j$ will delete the same $ret$ when locally executing $op$.  
+
+    Finally, we need to prove that Claim~\ref{ooolem:safeLabels} still holds after each process executes line~\ref{oooline:label}, and that all processes label the same elements for $p_i$.  But this follows by the same logic that tells us that $ret$ was the argument of one of the first $k$ unmatched $Enqueue$ intances in $\rho$, as each process chooses elements to label that are the oldest unlabeled elements in $lQueue$.  Thus, each element labeled in the local execution of $op$ is the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho \cdot op$.  Since all processes locally executed all $Dequeue$ instances in the same order, each will label the same elements while locally executing $op$.
+%
+  \item $op$ is a fast $Dequeue$ instance, $op = Dequeue(,-,ret)$.  Since we only label elements for process $p_i$ during local execution of a slow $Deuqeue$ instance $op_\ell$ invoked at $p_i$ and no process can have two pending operation instances at the same time, we know that $op$ is invoked after $op_\ell$ returned, so $op$ linearizes after $op_\ell$.  Thus, by Claim~\ref{ooolem:safeLabels}, $ret$ was the argument of one of the first $k$ unmatched $Enqueues$ in $\pi$ before $op_\ell$, and thus before $op$.  By Lemma~\ref{ooolem:labelOwner}, no other process could have returned $ret$, and $p_i$ removes it from its $lQueue$ before returning it, so could not have returned it as the return value of another $Dequeue$ instace, and thus $ret$ is still the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho$.
   \end{itemize}
 \end{proof}
 
