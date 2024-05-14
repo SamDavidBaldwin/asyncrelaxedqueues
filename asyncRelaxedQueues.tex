@@ -1,10 +1,10 @@
 \documentclass[a4paper,anonymous,USenglish]{lipics-v2021} % TODO: Re-add anonymous tag
+\usepackage{tikz}
 
 \usepackage{algorithm,algpseudocode}
 \algtext*{EndIf}
 \algtext*{EndFor}
 
-\usepackage{tikz}
 
 \theoremstyle{definition}
 \newtheorem{construction}{Construction}
@@ -588,6 +588,7 @@ Let $R$ be an arbitrary, admissible, timed run of Algorithm~\ref{alg:relaxed}
 Since we now have operation instances, we can construct a permutation of all instances in $R$.  We then prove tha this permutation is a valid linearization, which shows the correctness of our algorithm.  We define operation instance timestamps as in the previous section.
 
 \begin{construction}\label{constr:relaxed}
+  Construct an order of all operation instances in $R$ as follows:
   \begin{enumerate}
   \item Let $\pi$ be the increasing lexicographic order of all $Enqueue$ and slow $Dequeue$ instances. \label{orderSlow}
   \item For each fast $Dequeue$ $op$, in increasing real-time invocation order, let
@@ -629,20 +630,33 @@ We need to prove that this sequence respects the real-time order of all non-over
   Thus, in all cases, $\pi$ respects the real-time order of $op_1$ and $op_2$, for any pair of instances.
 \end{proof}
 
+% Local execution seeing same history is the same as above, restricted to slow instances
+% Need to prove that processes agree on labels
+% Need to prove that once an element is labeled, it is always legal and never returned at a process for which it is not labeled
+% Prove legality: slow dequeues as before, fast dequeues can only happen after local execution of the slow dequeue *at the same process* which labeled them, so they are linearized after that, since instances at the same process cannot overlap.
+
 \begin{lemma}
-    The claiming of elementy by individual processes will be agreed upon by all processes in the system
+  If one process labels an element $x$ with $p_i$, then every process will label it $p_i$.
 \end{lemma}
 
 \begin{proof}
-  blee
+
 \end{proof}
 
 \begin{lemma}
-  Elements that are dequeued are unique
+  When an element is labeled $p_i$, no other process will return $x$ to a $Dequeue$ it invoked.
 \end{lemma}
 
 \begin{proof}
-  bibliography
+
+\end{proof}
+
+\begin{lemma}
+  $\pi$ is a legal sequence of operation instance, by the definition of a queue with $k$-Out-of-Order relaxed $Dequeue$.
+\end{lemma}
+
+\begin{proof}
+
 \end{proof}
 
 %In the case where $k > n$, since the number of messages required to have a successful dequeue in bounds is less than the number of permitted dequeues ooo, dequeues can be instant. This information is based off of PUT THE PAPER NAME HERE which utilizes prior labeling of elements within the queue structure with a process that is allowed to instantly dequeue it.  Given each element is distinct and can only be dequeued once, the labeling must be distinct, in that each process agrees on the labelling that a given value in the queue receives. Whereas in PAPER NAME AGAIN this is done via a process of synchronization of clocks, we will be adjusting the labelling to occur at points when we can guarantee that the view of distinct processes agree, at the point of dequeueing. As we have discussed, at the point in which a process dequeues, the information prior to that dequeue, the prefix to the execution $\rho$ to that point will be the same for all processes. Given that all processes will agree on a select set of information at the same relative point in their executions, we can treat this as a sort of synchronization, and make decisions as to the labelling of elements at this point.
