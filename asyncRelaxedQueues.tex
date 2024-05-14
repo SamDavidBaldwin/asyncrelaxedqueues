@@ -320,7 +320,7 @@ At the point of locally executing a $Dequeue$ instance via the confirmation list
 
 
 %%%%%%%%%%%%%%%
-\subsection{Correctness}
+\subsection{Correctness}\label{sec:fifoCorrectness}
 In order to prove that this algorithm correctly implements the queue specification, we will consider an arbitrary, admissable timed run $R$.  We will first prove that all invocations have a matching return, so that we have complete operation instances.  We can then construct a total order of all operation instances in $R$ and prove that it respects real time order, making it a valid linearization, and is legal by the specification of a queue.  The core of the proof is in proving that when any process removes a particular $Dequeue$ instance's return value from its local replica of the queue, it deletes the same value as every other process does.  This means that all replicas will undergo the same series of operations, and allows us to prove that they continue removing the correct values.  To ensure that all processes remove the same element, we use the $safe$/$unsafe$ flags to leave elements for any $Dequeue$ instances which linearize earlier, but which that process is not ready to execute on its replica.
 
 \begin{lemma}\label{fifolem:responses}
@@ -497,7 +497,7 @@ This runtime is optimal, as we can show by a simple indistinguishability argumen
 
 We next move on to consider how we might be able to get around the lower bound in Lemma~\ref{fifolem:pairfreeLB}.  Relaxation has previously been useful for circumventing lower bounds \cite{TalmageWelch14}, so we consider it here.  The $k$-Out-of-Order relaxed $Dequeue$ is still pair-free, since $Dequeue$ cannot return the same value more than once, but there are more possible return values, many of which are not so order-constrained.  We follow \cite{TalmageWelch14} in using relaxation to split $Dequeue$ instances into two types: ``slow'' $Dequeue$s that behave like those in the FIFO algorithm above, taking $2d$ time to return, and ``fast'' $Dequeue$s which return a value immediately on execution, not waiting for the background coordinating communication that slows down other operations.  To enable the algorithm to do this without violating legality, we partition the set of $k$ values which a $Dequeue$ instance can return and give each process ownership of a disjoint subset.  Then that process can safely $Dequeue$ any of its own elements, knowing that no other process will return them to a $Dequeue$.  When a process runs out of elements, its next $Dequeue$ instance will be slow, as it takes the time to coordinate with other processes to determine its return value.  We use that same time to assign ownership of more values, so that future $Dequeue$ instances at that process can be fast again.
 
-Overall, this means that most $Dequeue$ instances take no time at all for comunication delay, vastly outperforming the unrelaxed queue.  The worst case per-instance cost is identical, but the amortized performance is significantly better.  One interesting aspect of this algorithm, that makes it significantly more complex than just adding relaxation handling to Algorithm~\ref{alg:fifo} is that we can no longer rely solely on timestamp order for linearization.  Since fast $Dequeue$ instances return instantly, there is no guarantee that timstamp order correctly captures their real-time order.  Thus, we must construct a much more complex linearization order to satisfy real-time order, then prove that it is legal.  We rely on invariants related to value ownership, to ensure that fast instances choose values that will be legal for them to return at their linearization points, even if those are quite differnt than the timestamp order the code actually sees. 
+Overall, this means that most $Dequeue$ instances take no time at all for comunication delay, vastly outperforming the unrelaxed queue.  The worst case per-instance cost is identical, but the amortized performance is significantly better.  One interesting aspect of this algorithm, that makes it significantly more complex than just adding relaxation handling as previously done in partially synchronous systems to Algorithm~\ref{alg:fifo} is that we can no longer rely solely on timestamp order for linearization.  Since fast $Dequeue$ instances return instantly, there is no guarantee that timstamp order correctly captures their real-time order.  Thus, we must construct a much more complex linearization order to satisfy real-time order, then prove that it is legal.  We rely on invariants related to value ownership, to ensure that fast instances choose values that will be legal for them to return at their linearization points, even if those are quite differnt than the timestamp order the code actually sees. 
 
 %%%%%%%%%%%%%%%
 \subsection{Description}
@@ -510,17 +510,17 @@ The process of labeling is done by guaranteeing that processes have the same vie
 %%%%%%%%%%%%%%%
 \subsection{Algorithm}
 
-Becuase this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portions that are identical to those in that algorithm.  For example, the code for handling $Enqueue$ is exactly the same as that on lines~\ref{fifoline:invEnq}-\ref{fifoline:finishEnq} of Algorithm~\ref{alg:fifo}, so we omit it here.  Any code not presented here is identical to that above.  The code for handling $Dequeue$ is similar to what we had before, but differentiates fast and slow instances, so we present it here. 
+Because this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portions that are identical to those in that algorithm.  For example, the code for handling $Enqueue$ is exactly the same as that on lines~\ref{fifoline:invEnq}-\ref{fifoline:finishEnq} of Algorithm~\ref{alg:fifo}, so we omit it here.  Any code not presented here is identical to that above.  The code for handling $Dequeue$ is similar to what we had before, but differentiates fast and slow instances, so we present it here. 
 
 \begin{algorithm}
   \caption{Queue with $k$-Out-of-Order Relaxed $Dequeue$: Handlers for $Dequeue$}\label{alg:relaxed}
   \begin{algorithmic}[1]
     \Function{Dequeue}{}
       \State $Deq_{ts} = incrementTS()$
-      \If {$localQueue.peekByLabel(p_{i}) \neq \bot$}
+      \If {$localQueue.peekByLabel(p_{i}) \neq \bot$}\label{oooline:checkFast}
         \State $ret = localQueue.deqByLabel(p_i)$
         \State send $(Deq_f, ret, i, Deq_{ts})$ to all processes
-        \State \Return $ret$
+        \State \Return $ret$ \label{oooline:fastDeqResponse}
       \Else
         \State send $(Deq_s, null, i, Deq_{ts})$ to all processes
       \EndIf
@@ -571,16 +571,62 @@ Becuase this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portio
 
 %%%%%%%%%%%%%%%
 \subsection{Correctness}
-For the K-OOO queue the same strucutre of a run $R$ and a permutation $\pi$ is established. Lemmas 5.1, 5.2, and 5.4 remain unchanged, as the out of order behavior does not inherently adjust those behaviors of the queue structure. The Out of order behavior does not allow for the violation of real time order linearization, as it only allows for the structure to be accessed in an expanded manor. It also doesn't adjust how the there must be a matching response for any invocation or that there must be a corresponding enqueue for each dequeue invocations. 
+For the K-OOO queue, we start with a similar structure of a run $R$ and a linearization $\pi$. The primary difference is that the linearization must be more complex, to deal with fast $Dequeue$ instances.  Several lemmas from Section~\ref{sec:fifoCorrectness} still apply to $Enqueue$ and slow $Dequeue$ instances, though we need to extend them to account for fast $Dequeue$ instances.  Once we deal with linearization, the out of order behavior of these instances does not significantly change the correctness argument, it only expands our access to the structure.
 
-However, given that the relaxation adjusts the structures of dequeues, we must further prove that with this adjusted behavior the local view of the queues are equivalent at the time of dequeue, and that elements, when dequeued are unique. 
+Formally, a fast $Dequeue$ instance is one which passes the check on line~\ref{oooline:checkFast}.  Any $Dequeue$ instance which fails this check is slow.
+
+Let $R$ be an arbitrary, admissible, timed run of Algorithm~\ref{alg:relaxed}
 
 \begin{lemma}
-  The local view of the queue across processes are equivalent at the time of dequeue
+ In $R$, every invocation has a matching response.
 \end{lemma}
 
 \begin{proof}
-  blee
+  $Enqueue$ and slow $Dequeue$ instances are exactly as in Algorithm~\ref{alg:fifo}, so we omit the proof here, referring the reader to Lemma~\ref{fifolem:responses}.  Fast $Dequeue$ instances will necessarily generate a return on line~\ref{oooline:fastDeqResponse}.  Thus every invocation has a matching response.
+\end{proof}
+
+Since we now have operation instances, we can construct a permutation of all instances in $R$.  We then prove tha this permutation is a valid linearization, which shows the correctness of our algorithm.  We define operation instance timestamps as in the previous section.
+
+\begin{construction}\label{constr:relaxed}
+  \begin{enumerate}
+  \item Let $\pi$ be the increasing lexicographic order of all $Enqueue$ and slow $Dequeue$ instances. \label{orderSlow}
+  \item For each fast $Dequeue$ $op$, in increasing real-time invocation order, let
+    \begin{itemize}
+    \item $\rho$ be the subsequence of all $Enqueue$ and slow $Dequeue$ instances which return before $op$'s invocation;
+    \item $\sigma$ be the subsequence of all fast $Dequeue$ instances already in $\pi$ which return before $op$'s invocation;
+    \item $\tau$ be the subsequence of all $Enqueue$ and slow $Dequeue$ instances invoked after $op$ returns.
+    \end{itemize}
+    Place $op$ in $\pi$ immediately after the later of the last (in $\pi$) elements of $\rho$ and $\sigma$.\label{orderFast}
+  \end{enumerate}
+\end{construction}
+
+%Note that there may be $Enqueue$ and slow $Dequeue$ instances in neither $\rho$ nor $\tau$ if they are concurrent with $op$.
+
+We need to prove that this sequence respects the real-time order of all non-overlapping operation instances.  We first note that the subsequence defined in step~\ref{orderSlow} respects real-time order by the argument in Lemma~\ref{fifolem:realTimeOrder}.
+
+\begin{lemma}\label{ooolem:fastDeqOrdering}
+  When we place each fast $Dequeue$ instance $op$ in step~ref{orderFast} of Construction~\ref{constr:relaxed}, it precedes, in $\pi$, all elements of $\tau$.
+\end{lemma}
+
+\begin{proof}
+  First, note that all elements of $\rho$ precede all elements of $\tau$ in $\pi$, by step~\ref{orderSlow}.  Next, we prove that all elements of $\sigma$ also precede all elements of $\tau$ in $\pi$.
+
+  Since every element of $\tau$ is invoked after $op$ returns and every element of $\sigma$ returns before $op$ is invoked, every element of $\sigma$ returns before any elmeent of $\tau$ is invoked.  Thus, an element $op'$ of $\sigma$ only follows an elment of $\tau$ in $\pi$ if some previously-placed fast $Dequeue$ instance (in the $\sigma$ when we placed $op'$) was placed in $\pi$ later than that element of $\tau$.  This argument holds in turn for that previously-placed fast $Dequeue$ instance, repeating all the way back to the first fast $Dequeue$ instance step~\ref{orderFast} placed in $\pi$.  That could only be placed after an instance in $op$'s $\tau$ if a previous one was, but there was no previous one, so neither that first fast $Dequeue$ nor any subsequent one could be placed in $\pi$ after an element of $\tau$.  Thus, $op$ precedes every element of $\tau$ in $\pi$.
+\end{proof}
+
+\begin{lemma}
+  Construction~\ref{constr:relaxed} respects the real-time order of non-overlapping instances in $R$.
+\end{lemma}
+
+\begin{proof}
+  Consider any two operation instances $op_1$ and $op_2$ in $R$ which do not overlap in real time.  We break the proof down by cases for whether each of $op_1$ and $op_2$ is a fast $Dequeue$ instance or a slow instace: an $Enqueue$ or slow $Dequeue$.
+  \begin{itemize}
+  \item Both $op_1$ and $op_2$ are slow instances.  This follows from Lemma~\ref{fifolem:realTimeOrder}.
+  \item Both $op_1$ and $op_2$ are fast $Dequeue$ instances.  Order follows by construction.  We place the later, in real time order, of $op_1$ and $op_2$ second, and by the definition of $\sigma$ in step~\ref{orderFast} of Construction~\ref{constr:relaxed}, $op_1$ is in $\sigma$, so we place $op_2$ in $\pi$ after $op_1$.
+  \item One of $op_1$ is a fast $Dequeue$ instance, the other is a slow instance.  When we place the fast instance (WLOG, $op_1$) in $\pi$, since $op_1$ and $op_2$ do not overlap, then if $op_2$ precedes $op_1$ in real-time order and was thus in $\rho$, so we place $op_1$ after $op_2$ in $\pi$ .  If $op_1$ precedes $op_2$ in real-time order, then $op_2 \in tau$, and Lemma~\ref{ooolem:fastDeqOrdering} proves that $op_1$ precedes $op_2$ in $\pi$.
+  \end{itemize}
+
+  Thus, in all cases, $\pi$ respects the real-time order of $op_1$ and $op_2$, for any pair of instances.
 \end{proof}
 
 \begin{lemma}
