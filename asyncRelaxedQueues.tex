@@ -76,7 +76,7 @@
 \maketitle
 
 \begin{abstract}
-We explore the problem of efficiently implementing shared data structures in an asynchronous computing environment.  We start with a traditional FIFO queue, showing that full replication is possible with a delay of only two round-trip messages between invocation and response of each operation.  We argue that this is optimal, since any shorter delay would allow scenarios where an algorithm cannot determine correct return values.  We then consider ways to circumvent this limitation on performance.  Though we cannot improve the worst-case time per operation instance, we show that \emph{relaxation}, weakening the ordering guarantees of the Queue data type, allows most $Dequeue$ instances to return more quickly than the worst-case, giving a low amortized cost per instance.  This performance is tunable, giving a customizable tradeoff between the ordering of data and the speed of access.
+We explore the problem of efficiently implementing shared data structures in an asynchronous computing environment.  We start with a traditional FIFO queue, showing that full replication is possible with a delay of only a single round-trip message between invocation and response of each operation.  This is optimal, or near-optimal, runtime for the $Dequeue$ operation.  We then consider ways to circumvent this limitation on performance.  Though we cannot improve the worst-case time per operation instance, we show that \emph{relaxation}, weakening the ordering guarantees of the Queue data type, allows most $Dequeue$ instances to return after only local computation, giving a low amortized cost per instance.  This performance is tunable, giving a customizable tradeoff between the ordering of data and the speed of access.
 \end{abstract}
 
 %%%%%%%%%%%%%%%
@@ -114,18 +114,20 @@ While we focus primarily on performance, another interesting aspect of our work 
 
 %%%%%%%%%%%%%%%
 \subsection{Asynchronous System Model}
-We assume a fully asynchronous message passing model of computation.  The system contains a set of $n$ processes $\Pi = [p_0, \dots , p_{n-1}]$ modeled as state machines, and a set of $n$ users, one for each process.  Each state machine accepts two types of inputs: the corresponding user may \emph{invoke} an operation, or the machine may \emph{receive} a message.  Each of these will trigger a handler.  Each process, in its handlers, may perform local computation, or perform one of of two external actions: it may \emph{respond} to its user or \emph{send} a message to another process.  The state machines are time-free, meaning that their output is only described through their input and state transitions without any specific time bound.  We also assume no processes fail, instead performing exactly as per the state machine specification.  We assume that handlers are non-interruptible and that local computation time is negligible, to focus on the time cost of communication.  A user may not invoke an operation at a particular process until the process responds to its last invocation.
+We assume a fully asynchronous message passing model of computation.  The system contains a set of $n$ processes $\Pi = [p_0, \dots , p_{n-1}]$ modeled as state machines, and a set of $n$ users, one for each process.  Each state machine accepts two types of inputs: the corresponding user may \emph{invoke} an operation, or the machine may \emph{receive} a message.  Each of these will trigger a handler.  Each process, in its handlers, may perform local computation, or perform one of of two external actions: it may \emph{respond} to its user or \emph{send} a message to another process.  The state machines are time-free, meaning that their output is only described through their input and state transitions without any specific time bound.  A user may not invoke an operation at a particular process until the process responds to its last invocation.  
 
-We assume all inter-process communication is reliable, so when a process sends a message, that message will eventually be received at its destination process exactly once, a finite amount of time after it is sent.  Additionally, we assume communication channels between processes are First-In, First-Out (FIFO).  That is, if process $p_i$ sends message $m_1$ to process $p_j$, then sends message $m_2$ also to $p_j$, then $p_j$ will receive $m_1$ before it receives $m_2$.  This assumption does not reduce the generality of our results, as we can implement such an ordering guarantee by attaching a sequence number to each message and buffering incoming messages at each process.  We store out of order messages in this buffer until all previous messages are received, then receive the buffered message.
+We consider failure-free systems, in which no processes fail,instead always behaving per the state machine specification.  We assume all inter-process communication is reliable, so when a process sends a message, that message will arrive at its destination process exactly once after a finite amount of time.  Additionally, we assume communication channels between processes are First-In, First-Out (FIFO).  That is, if process $p_i$ sends message $m_1$ to process $p_j$, then sends message $m_2$ also to $p_j$, $p_j$ will receive $m_1$ before it receives $m_2$.  This assumption does not reduce the generality of our results, as we can implement such an ordering guarantee by attaching a sequence number to each message and buffering incoming messages at each process.  We store out of order messages in this buffer until all previous messages are received, then receive the buffered message.
 
-While there is no notion of time available to processes in the system, we establish a notion of the time cost of our algorithms by considering that they run in real time.  There are no upper or lower bounds on either local computation time or the time between when a message is sent and received.  However, we can measure an algorithmic time, from outside the system, by expressing it in terms of the number of sequential messages which must occur in that duration \cite{AttiyaWelch04}.  That is, in a particular run, we define the parameter $d$ as the real time duration of the longest time between sending and receiving any one message.  We express algorithmic time in terms of $d$, by considering how many messages the algorithm sends and receives, with each send necessarily occurring after the receive of the previous message.  Since each of those delays may be the largest in that run, this gives a measure of algorithmic runtime without bounding real time message delays.  
+While time is unavailable to processes in the system, we establish a notion of the time cost of our algorithms by considering that they run in real time.  When analyzing our algorithms, we will speak of a \emph{run}, which comprises a sequence of state-machine events for each process.  We consider \emph{timed runs}, which are simply runs with a real-time associated with each event.  A run is \emph{admissible} if it satisfies the conditions we have laid out (messages arrive, in FIFO order, users invoke one operation instance at a time) and each state machine runs infinitely.
+
+There are no upper or lower bounds on either local computation time or the time between when a message is sent and received.  However, we can measure an algorithmic time, from outside the system, by expressing it in terms of the number of sequential messages which must occur in that duration \cite{AttiyaWelch04}.  That is, in a particular run, we define the parameter $d$ as the real time duration of the longest time between sending and receiving any one message.  We express algorithmic time in terms of $d$, by considering how many messages the algorithm sends and receives where a send must occur after the receive of the previous message.  Since each of those delays may be the largest in that run, this gives a measure of algorithmic runtime without bounding real time message delays.  
 
 %%%%%%%%%%%%%%%
 \subsection{Data Type Definitions}
 
-We first state the definition for a standard FIFO queue abstract data type, then that for the relaxed queue we study here.  We state abstract date type (ADT) specifications in two parts: First, a list of operations the user can invoke, with argument and return types, expressed as $OP(arg,ret)$.  We use $-$ to indicate when a function takes no argument or returns no value.  Second, we define the set of legal \emph{instances} of these operations.  An operation instance is an invocation-response pair, noting that these are significantly separate events in a distributed setting.  We assume that each process' user cannot invoke an operation until it has received a response to its last previous invocation.   
+We first state the definition for a standard FIFO queue abstract data type, then that for the relaxed queue we implement.  We state abstract date type (ADT) specifications in two parts: First, a list of operations the user can invoke, with argument and return types, expressed as $OP(arg,ret)$.  We use $-$ to indicate when a function takes no argument or returns no value.  Second, we define the set of legal \emph{instances} of these operations.  An operation instance is an invocation-response pair, noting that these are separate events in a distributed setting.
 
-To simplify the statement of our definitions, we assume that each argument to $Enqueue$ is unique.  One way to achieve this practically would be a simple abstraction layer that adds a (logical) timestamp to each value before it is passed to the data structure.  We also define the notion of \emph{matching}: A $Dequeue$ instances matches an $Enqueue$ instance if it returns that $Enqueue$'s (unique) argument.  We will use the special character $\bot$ to represent an empty queue.
+To simplify the statement of our definitions, we assume that each argument to $Enqueue$ is unique.  One way to achieve this practically would be a simple abstraction layer that adds a (logical) timestamp to each value before it is passed to the data structure.  We also define the notion of \emph{matching}: A $Dequeue$ instance matches an $Enqueue$ instance if it returns that $Enqueue$ instance's (unique) argument.  We will use the special character $\bot$ to represent an empty queue.
 
 \begin{definition}\label{def:FIFOQueue}
   A \emph{Queue} over a set of values V is a data type with two operations:
@@ -148,9 +150,8 @@ We can now formally define the relaxed queue we implement in this paper.  Intuit
   The empty sequence is legal.  For any legal sequence $\rho$ of instances of $k$-out-of-order queue operations and $val \in V$, (1) $\rho \cdot Enqueue(val,-)$ is legal, (2) $\rho \cdot Dequeue(-,val)$ is legal iff $val$ is the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho$, and (3) $\rho \cdot Dequeue(-,\bot)$ is legal iff there are fewer than $k$ unmatched $Enqueue$ instances in $\rho$.
 \end{definition}
 
-We are interested in implementations which satisfy \emph{linearizability} \cite{HerlihyWing90}.  Linearizability is a consistency condition which describes how concurrent executions of a data structure relate to the sequential specification of the ADT the structure implements.  Specifically, linearizability requires that operation response values be such that there is a total order of all operation instances in the execution which is legal according to the ADT and which respects the real-time order of instances which do not overlap in real time.  That is, if one instance returns before, in real time, another's invocation, that one which returned first must be ordered first.  This condition provides behavior that matches that we intuitively expect systems to have, disallowing inversions in real time.  Linearizability also has the advantage of being composable, meaning that running multiple linearizable objects in the same execution will necessarily produce an overall linearizable execution.  Linearizability is the strongest consistency condition we might satisfy, so our upper bounds translate to any other consistency condition one might use.
+We are interested in implementations which satisfy \emph{linearizability} \cite{HerlihyWing90}.  Linearizability is a consistency condition which describes how concurrent executions of a data structure relate to the sequential specification of the ADT the structure implements.  Specifically, linearizability requires that in any admissible timed run, operation response values be such that there is a total order of all operation instances in the execution which is legal according to the ADT and which respects the real-time order of instances which do not overlap in real time.  That is, if instance $op_1$ returns before, in real time, instance $op_2$'s invocation, $op_1$ must precede $op_2$ in the order.  This condition provides behavior that matches our intuitive expectations of a system, disallowing inversions in real time.  Linearizability also has the advantage of being composable, meaning that running multiple linearizable objects in the same execution will necessarily produce an overall linearizable execution.  Linearizability is the strongest consistency condition, so our upper bounds translate to any other consistency condition one might use.
 
-When analyzing our algorithms, we will speak of a \emph{run}, which comprises a sequence of state-machine events for each process.  We consider \emph{timed runs}, which are simply runs with a real-time associated with each event.  A run is \emph{admissible} if it satisfies the conditions we have laid out (messages arrive, in FIFO order, users invoked one operation instance at a time) and runs infinitely.
 
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
@@ -161,29 +162,31 @@ When analyzing our algorithms, we will speak of a \emph{run}, which comprises a 
 
 We present a fully-replicated implementation of a queue, with coordination done by logical timestamping and messages announcing and confirming invocations.  When a user invokes an operation, the invoking process increments its local vector clock and then broadcasts that timestamp with a request for the operation instance to take effect.  It then waits until it receives confirmations from all other processes, as this guarantees that they have all updated their timestamps and that the invoking process is aware of all operation instances with smaller timestamps, then returns to the user.  This delay enables linearization by guaranteeing that concurrent operation instances are long enough to be aware of each other and return appropriate values.
 
-When a process receives an operation request, along with its timestamp and any applicable argument values, it will send update its vector clock to be larger than that of the received invocation, and send an acknowledgment back to the invoker.  For $Dequeue$ instances, the process also sends acknowledgments to all other processes, to enable them to apply all $Dequeue$ instances to their local replica in the correct order.  Depending on the type of the operation, the acknowledging will either apply it to its own replica immediately, in the case of an $Enqueue$ instance, or after receiving acknowledgments from all processes, in the case of a $Dequeue$ instance.  We prove below that this delay is sufficient to guarantee that processes can locally execute every $Dequeue$ instance in timestamp order and enables us to use that order for our linearization.  Since we do not delay local execution of $Enqueue$ instances, we must be careful not to return the argument of an $Enqueue$ to a $Dequeue$ instance too soon, but since we are using timestamp order and associate timestamps with values in the local replicas, this is straightforward.
+When a process receives an operation request, along with its timestamp and any applicable argument values, it will update its vector clock to be larger than that of the received invocation and send an acknowledgment back to the invoker.  For $Dequeue$ instances, the process also sends acknowledgments to all other processes, to enable them to apply all $Dequeue$ instances to their local replica in the correct order.  Depending on the type of the operation, the acknowledging process will either apply it to its own replica immediately, in the case of an $Enqueue$ instance, or after receiving acknowledgments from all processes, in the case of a $Dequeue$ instance.  We prove below that this delay is sufficient to guarantee that processes can locally execute every $Dequeue$ instance in timestamp order and enables us to use that order for our linearization.  Since we do not delay local execution of $Enqueue$ instances, we must be careful not to return the argument of an $Enqueue$ to a $Dequeue$ instance too soon, but since we are using timestamp order and associate timestamps with values in the local replicas, this is straightforward.
 
-\paragraph{Vector Clocks}  Each process stores a vector clock timestamp that holds its local view of the number of steps of the algorithm (invocation and message send) each process has taken.  We refer to the local vector clock at process $p_i$ as $v_i$.  Each process' vector clock is an array of size $n$ that is initially 0 at all indices.  When any process $p_i$ invokes $Enqueue$ or $Dequeue$, it increments index $i$ in its local clock, $v_i[i]$ and broadcasts the new timestamp.  Processes also update their vector clocks when they receive a message containing a timestamp from another process.  To update its local vector clock, the receiving process updates the value at each index of its clock vector to the larger of its previous value and the corresponding value in the received timestamp.  This guarantees that the local clock will be at least as large as the received message at all indices in the local clock, recording its knowledge of the previous remote event for all later events.
+\paragraph*{Vector Clocks}  Each process maintains a logical vector clock that holds its local view of the number of steps of the algorithm (invocation and message send) each process has taken.  We refer to each $p_i$'s vector clock as $v_i$.  Each process' vector clock is an array of size $n$ that is initially 0 at all indices.  When any process $p_i$ invokes $Enqueue$ or $Dequeue$, it increments index $i$ in its local clock, $v_i[i]$, and broadcasts the new timestamp.  When another process receives a message containing a timestamp, it will update its vector clock value.  To do so, the receiving process first increments its own component, then updates the value at each index of its clock vector to the larger of its previous value and the corresponding value in the received timestamp.  This guarantees that each component of the local clock will be at least as large as the received timestamp, recording its knowledge of the previous remote event.
 
-We define two orders on timestamp vectors.  For any two vector timestamps $v_i$ and $v_j$, we say $v_i$ is \emph{strictly smaller} than $v_j$, denoted $v_i \prec  v_j$, if $v_i[x] < v_j[x],\forall x \in [0, \dots, n-1]$.  If this is not true, there is some index $k$, where the vectors first differ.  That is, for $x = 0$ to $k-1$, $v_i[k] < v_j[x]$ but $v_i[k] \geq v_j [k]$.  Then we say that $v_i$ is \emph{lexicographically smaller} than $v_j$ and write $v_i << v_j$.  Notice that $v_i \prec v_j$ implies that $v_i << v_j$ but not the opposite.
+We define two orders on timestamp vectors.  For any two unequal vector timestamps $v_i$ and $v_j$, we say $v_i$ is \emph{strictly smaller} than $v_j$, denoted $v_i \prec  v_j$, if $v_i[x] \leq v_j[x],\forall x \in [0, \dots, n-1]$.  If this is not true, let $k$ be the index where the vectors first differ.  That is, for $x = 0$ to $k-1$, $v_i[x] = v_j[x]$, but $v_i[k] \leq v_j [k]$.  Then we say that $v_i$ is \emph{lexicographically smaller} than $v_j$ and write $v_i << v_j$.  Notice that $v_i \prec v_j$ implies that $v_i << v_j$ but not the opposite.
 
 %%%%%%%%%%
-\subsubsection{Confirmation Lists}\label{sec:confLists}
-The main algorithmic idea that allows us to handle asynchrony is a structure we call \emph{Confirmation Lists}.  Each process uses these lists to track acknowledgments from other processes for a given $Dequeue$ instance.  When a process $p_j$ learns about a $Dequeue$ invocation at process $p_i$, $p_j$ will create a \emph{confirmation list} object, keyed to the timestamp of the $Dequeue$ invocation and stores that object in a sorted list of confirmation lists, $PendingDequeues$.  The confirmation list contains the timestamp that uniquely identifies it and an array $n$ Booleans to track responses each process.  A process can learn about an invocation by invoking a $Dequeue$ itself, from a $Dequeue$ request message directly from the invoking process, or from a third-party process' response message to a $Dequeue$ invocation.  A confirmation list's responses array initially contains $False$ at every index, except for the position corresponding to the invoking process, which is $True$.  The list fills as the process receives acknowledgments to the $Dequeue$ request, placing each in the position corresponding to the responding process.  If a process creates a confirmation list when it receives a response before receiving the initial $Dequeue$ request, it can place that response in the position corresponding to the sender immediately on creating the confirmation list.
+\paragraph*{Confirmation Lists}
+The main algorithmic idea that allows us to handle asynchrony is a structure we call \emph{Confirmation Lists}.  Each process uses these lists to track acknowledgments from other processes for a given $Dequeue$ instance.  When a process $p_j$ learns about a $Dequeue$ invocation at process $p_i$, $p_j$ will create a \emph{confirmation list} object, keyed to the timestamp of the $Dequeue$ invocation and stores that object in a list of confirmation lists, $PendingDequeues$, which is sorted in increasing lexicographic order of timestamps.  The confirmation list contains the timestamp that uniquely identifies it and an array of $n$ Booleans to track responses from each process.  A process can learn about an invocation by receiving a $Dequeue$ request message directly from the invoking process or by receiving a third-party process' response message to a $Dequeue$ invocation.  A confirmation list's $responses$ array initially contains $False$ at every index, except for the position corresponding to the invoking process, which is $True$.  The list fills as the process receives acknowledgments to the $Dequeue$ request, setting the position corresponding to the responding process to $True$.
 
-When a process $p_j$ receives a response from process $p_k$ for a $Dequeue$ instance $op$, it knows that $p_k$ has updated its local clock to be strictly larger than $op$'s timestamp, and thus necessarily larger than the timestamp of any other $Dequeue$ instance in $PendingDequeues$ with a lexicographically smaller timestamp.  $p_j$ will thus set not only the cell at index $k$ of $op$'s confirmation list to $True$, but the value at index $k$ in any other pending $Dequeue$ instances with smaller timestamps.  When process the confirmation list at $p_j$ for $op$ contains only $True$ values in its response array, because it has received responses from all processes, $p_j$ can locally execute that $Dequeue$ instance, applying it to its own local copy of the queue.  
+When a process $p_j$ receives a response from process $p_k$ for a $Dequeue$ instance $op$, it knows that $p_k$ has updated its local clock to be strictly larger than $op$'s timestamp, and thus necessarily larger than the timestamp of any other $Dequeue$ instance with a lexicographically smaller timestamp.  $p_j$ will thus set not only the cell at index $k$ of $op$'s confirmation list to $True$, but the value at index $k$ in any other pending $Dequeue$ instances with smaller timestamps.  When the confirmation list at $p_j$ for $op$ contains only $True$ values in its response array, it has received responses from all processes so $p_j$ can locally execute that $Dequeue$ instance, applying it to its own local copy of the queue.  
 
-%%%%%%%%%%%%%%%
-\subsection{Algorithm}
-
-This algorithm is based on that of Talmage and Welch \cite{TalmageWelch14}.  Instead of using timers based on knowledge of message delays, we here use round-trip messages to indicate when processes can apply operation instances to their local replicas of the shared queue.  As discussed, we also use vector clocks to order events.
-
-We first outline a number of local variables and sequential functions used by our local data structures.  We discussed $PendingDequeues$ and confirmation lists, in Section~\ref{sec:confLists} above.  Each process maintains a variable $lQueue$, which is its local replica of the simulated shared queue.  $lQueue$ is implemented as a minimum priority queue storing values, process ids, and timestamps, keyed on timestamp.  Each entry is the argument of an $Enqueue$ instance, with the invoking process' id and timestamp.  We remove elements in priority order, but allow the constraint of passing a parameter which upper-bounds the timestamp of the removed value.  If there is no value in $lQueue$ with timestamp lexicographically smaller than that passed in, $lQueue$ will indicate that it is empty by returning $\bot$.  These operations are invoked as follows:
+%%%%%%%%%%
+\paragraph*{Local Replica}
+Each process maintains a variable $lQueue$, which is its local replica of the simulated shared queue.  We implement $lQueue$ as a minimum priority queue storing values, process ids, and timestamps, keyed on timestamp.  Each entry is the argument of an $Enqueue$ instance, with the invoking process' id and timestamp.  We remove elements in priority order, but allow the constraint of passing a parameter which upper-bounds the timestamp of the removed value.  If there is no value in $lQueue$ with timestamp lexicographically smaller than that bound, $lQueue$ will indicate that it is empty by returning $\bot$.  We invoke these operations as follows:
 \begin{itemize}
-\item $lQueue.insertByTS(val, inv, ts)$: Adds an entry to $lQueue$, sorting by lexicographic timestamp order on $ts$, and saving the value $val$ along with $ts$ and the invoking process id $inv$.
+\item $lQueue.insertByTS(val, inv, ts)$: Adds an entry containing the triple $(val, inv, ts)$ to $lQueue$, sorting by lexicographic timestamp order on $ts$.
 \item $lQueue.dequeue(ts)$: Returns and removes the oldest element in $lQueue$ with timestamp smaller than $ts$, $\bot$ if there is none.
 \end{itemize}
-Pseudocode appears in Algorithms~\ref{alg:fifo} and \ref{alg:helpers}.
+
+
+%%%%%%%%%%%%%%%
+\subsection{Pseudocode}
+
+This algorithm is based on that of Talmage and Welch \cite{TalmageWelch14}.  Instead of using timers based on knowledge of message delays, we use round-trip messages to indicate when processes can apply operation instances to their local replicas of the shared queue.  Pseudocode appears in Algorithms~\ref{alg:fifo} and \ref{alg:helpers}.
 
 \begin{algorithm}
   \caption{Code for each process $p_i$ to implement a Queue}\label{alg:fifo}
@@ -194,7 +197,7 @@ Pseudocode appears in Algorithms~\ref{alg:fifo} and \ref{alg:helpers}.
       \State send $(EnqReq, val, Enq_{ts}, i)$ to all processes\label{fifoline:sendEnqReq}
     \EndFunction
 
-    \Function{Receive}{$EnqReq, val, inv, Enq_{ts}$} from $p_{inv}$
+    \Function{Receive}{$EnqReq, val, Enq_{ts}, inv$} from $p_{inv}$
       \State $updateTS(Enq_{ts})$ \label{fifoline:enqReqTSUpdate} \Comment{Update local vector clock by invocation's timestamp}
       \State $lQueue.insertByTS(val, inv, Enq_{ts})$\label{fifoline:executeEnq} \Comment{Locally execute the $Enqueue$ instance}
       \State send $(EnqAck, i)$ to $p_{inv}$ \label{fifoline:sendEnqAck} \Comment{Acknowledge receipt of the invocation}
@@ -215,22 +218,22 @@ Pseudocode appears in Algorithms~\ref{alg:fifo} and \ref{alg:helpers}.
     \Function{Receive}{$(DeqReq, Deq_{ts}, inv)$ from $p_{inv}$}
     \State $updateTS(Deq_{ts})$ \label{fifoline:deqReqTSUpdate}
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
-      \State $PendingDequeues.insertByTS(createList(Deq_{ts}, p_{inv}$))\label{fifoline:savePendingDeq}
+      \State $PendingDequeues.insertByTS(createList(Deq, Deq_{ts}, p_{inv}$))\label{fifoline:savePendingDeq}
       \EndIf
       \State send $(DeqAck, Deq_{ts}, p_{inv}, i)$ to all processes \label{fifoline:sendSafetyFlag}\label{fifoline:sendDeqAck}
     \EndFunction
 %
     \Function{Receive}{$(DeqAck, Deq_{ts}, p_{inv}, j)$ from $p_j$}
       \If{$Deq_{ts}$ not in $PendingDequeues$}
-        \State $PendingDequeues.insertByTS(createList(Deq_{ts}, p_{inv}))$
+        \State $PendingDequeues.insertByTS(createList(Deq, Deq_{ts},p_{inv}))$
       \EndIf
       \State Define $currentConfList$ as the confirmation list in $PendingDequeues$ which has $ts == Deq_{ts}$
       \State $currentConfList.responses[j] = True$ \label{fifoline:setResponse}
-      \State $propagateEarlierResponses(PendingDequeues, Deq_{ts}, j)$ \label{fifoline:propagateEarlier} \Comment{Enable lower-timestamp pending $Dequeue$ instances to execute}
+      \State $propagateEarlierResponses(PendingDequeues, Deq_{ts}, j)$ \label{fifoline:propagateEarlier}
 
       \For{each $confirmationList$ in $PendingDequeues$, in increasing lexicographic timestamp order}
         \If{all $response$s in $confirmationList$ are $True$}\label{fifoline:fullConfList}
-          \State $ret = lQueue.dequeue(Deq_{ts})$\label{fifoline:chooseDeqValue} \Comment{Locally execute the $Dequeue$ instance, ignoring elements with later timestamps} 
+          \State $ret = lQueue.dequeue(Deq_{ts})$\label{fifoline:chooseDeqValue} \Comment{Locally execute the $Dequeue$ instance} 
         \State delete $confirmationList$ from $PendingDequeues$
         \If{$p_i == p_{inv}$} \Return $ret$ to user \label{fifoline:deqReturn} \EndIf \Comment{The invoking process responds to the user}
       \EndIf 
@@ -250,30 +253,31 @@ Pseudocode appears in Algorithms~\ref{alg:fifo} and \ref{alg:helpers}.
     \algrestore{fifoLines}
     
     \Function{propagateEarlierResponses}{$PendingDequeues, Deq_{ts}$}
-      \Statex \Comment{If a later-timestamp instance receives a $DeqAck$, then any earlier-timestamp instances need wait no longer for a $DeqAck$ from that process.}
-      \For{each confirmation list $PendingDequeues[j]$, in decreasing timestamp order} 
-        \For{each process id $k$}
-          \If{$PendingDequeues[j].responses[k]$ and $j>0$}
-            \State $PendingDequeues[j-1].responses[k] = True$
+      \Statex \Comment{If a later-timestamp instance receives a $DeqAck$ from $p_j$, then any earlier-timestamp instances need wait no longer for a $DeqAck$ from $p_j$.}
+      \For{each confirmation list $PendingDequeues[k]$ starting at $ts = Deq_{ts}$, in decreasing timestamp order} 
+        \For{each process id $j$}
+          \If{$PendingDequeues[k].responses[j]$ and $k>0$}
+            \State $PendingDequeues[k-1].responses[j] = True$
           \EndIf
         \EndFor
       \EndFor  
     \EndFunction
 %
     \Function{updateTS}{$v_j$}
-      \If{$v_j$ is empty}
-        \State $v_i[i] \pluseq 1$
-      \Else
-        \For{$k = 0$ up to $n - 1$}
+      \State $v_i[i] \pluseq 1$
+      \If{$v_j$ is not empty}
+        \For{$k = 0$ to $n - 1$}
           \State $v_i[k] = max(v_i[k], v_j[k])$
         \EndFor
       \EndIf
       \State return $v_i$
     \EndFunction
 %
-    \Function{createList}{$Deq_{ts}, p_{invoker}$}
+    \Function{createList}{$op, Deq_{ts}, p_{invoker}$}
       \State create a new confirmation list $ConfirmationList$
-      \State $ConfirmationList.responses = [0,0,...,0]$ \Comment{An array of $n$ 0s}
+      \State $ConfirmationList.op = op$
+      \State $ConfirmationList.responses = [False, False,...,False]$ \Comment{An array of $n$ Booleans}
+      \State $ConfirmationList.responses[invoker] = True$
       \State $ConfirmationList.ts = Deq_{ts}$ \Comment{A vector clock timestamp}
       \State $ConfirmationList.invoker = p_{invoker}$ \Comment{The invoking process of the Dequeue}
       \State return $ConfirmationList$
@@ -284,20 +288,20 @@ Pseudocode appears in Algorithms~\ref{alg:fifo} and \ref{alg:helpers}.
 
 %%%%%%%%%%%%%%%
 \subsection{Correctness}\label{sec:fifoCorrectness}
-In order to prove that this algorithm correctly implements the queue specification, we will consider an arbitrary, admissible timed run $R$.  We will first prove that all invocations have a matching return, so that we have complete operation instances.  We can then construct a total order of all operation instances in $R$ and prove that it respects real time order, making it a valid linearization, and is legal by the specification of a queue.  The core of the proof is in proving that when any process removes a particular $Dequeue$ instance's return value from its local replica of the queue, it deletes the same value as every other process does.  This means that all replicas will undergo the same series of operations, and allows us to prove that they continue removing the correct values.  To ensure that all processes remove the same element, we use the $safe$/$unsafe$ flags to leave elements for any $Dequeue$ instances which linearize earlier, but which that process is not ready to execute on its replica.
+In order to prove that this algorithm correctly implements the queue specification, we will consider an arbitrary, admissible timed run $R$.  We will first prove that all invocations have a matching return, so that we have complete operation instances.  We can then construct a total order of all operation instances in $R$ and prove that it respects real time order, making it a valid linearization, and is legal by the specification of a queue.  The core of the proof is in proving that when any process removes a particular $Dequeue$ instance's return value from its local replica of the queue, it deletes the same value as every other process does.  This means that all replicas will undergo the same series of operations, and allows us to prove that they continue removing the correct values.  
 
 \begin{lemma}\label{fifolem:responses}
   In $R$, every invocation has a matching response.
 \end{lemma}
 
 \begin{proof}
-When a user invokes an operation at process $p_i$, the algorithm sends an $EnqReq$ message containing the invocation to all processes on line~\ref{fifoline:sendEnqReq} or \ref{fifoline:sendDeqReq}, depending on the operation invoked.  Each process will receive that message in finite time by our assumption of reliable channels and send back an $EnqAck$ for an $Enqueue$ invocation on line~\ref{fifoline:sendEnqAck} or a safety flag for a $Dequeue$ invocation on line~\ref{fifoline:sendSafetyFlag}, as appropriate.  Each of those responses will arrive in finite time, and when $p_i$ receives all $n$ of them, it will generate a matching return on line~\ref{fifoline:enqReturn} for $Enqueue$ or line~\ref{fifoline:deqReturn} for $Dequeue$.
+When a user invokes an operation at process $p_i$, the algorithm sends a message containing the invocation to all processes on line~\ref{fifoline:sendEnqReq} or \ref{fifoline:sendDeqReq}, depending on the operation invoked.  Each process will receive that message in finite time by our assumption of reliable channels and send back an $EnqAck$ for an $Enqueue$ invocation on line~\ref{fifoline:sendEnqAck} or a $DeqAck$ for a $Dequeue$ invocation on line~\ref{fifoline:sendSafetyFlag}, as appropriate.  Each of those responses will arrive in finite time, and when $p_i$ receives all $n$ of them, it will generate a matching return on line~\ref{fifoline:enqReturn} for $Enqueue$ or line~\ref{fifoline:deqReturn} for $Dequeue$.
 \end{proof}
 
 Each process reads its vector clock at each invocation, on line~\ref{fifoline:enqTS} or \ref{fifoline:deqTS}, and associates that clock value with that invocation throughout the algorithm.  We will refer to this clock value as the \emph{timestamp} of the instance containing that invocation.
 
 \begin{construction}\label{constr:fifo}
-  Let our linearization $\pi$ be the increasing lexicographic order of all operation instances in $R$.
+  Let our linearization $\pi$ be the increasing lexicographic timestamp order of all operation instances in $R$.
 \end{construction}
 
 \begin{lemma}\label{fifolem:realTimeOrder}
@@ -306,17 +310,17 @@ Each process reads its vector clock at each invocation, on line~\ref{fifoline:en
 \begin{proof}
   Proof by contradiction. Let there be two non-overlapping operation instances $op_1$ and $op_2$, where $op_1$ returns prior to $op_2$'s invocation in real time.  Assume, for the sake of contradition, that $op_2$ is prior to $op_1$ in $\pi$.
   
-  Given that $op_1$ occurs before $op_2$ in real time, and that the two operation instances are non-overlapping, $op_2$'s timestamp must be larger, lexicographically, than $op_1$'s.  This follows from the fact that $op_1$ will not return until it receives a response from every process, including $op_2$'s invoking process (lines~\ref{fifoline:enqReturn}, \ref{fifoline:deqReturn}.  This means that $op_2$'s invoking process received the invocation for $op_1$ and updated its timestamp (line~\ref{fifoline:enqReqTSUpdate} or \ref{fifoline:deqReqTSUpdate}) before it invoked $op_2$, so $op_2$'s timestamp will be totally ordered after $op_1$'s, implying it is also lexicographically after.
+  Given that $op_1$ occurs before $op_2$ in real time, and that the two operation instances are non-overlapping, $op_2$'s timestamp must be larger, lexicographically, than $op_1$'s.  This follows from the fact that $op_1$ will not return until it receives a response from every process, including $op_2$'s invoking process (lines~\ref{fifoline:enqReturn}, \ref{fifoline:deqReturn}.  This means that $op_2$'s invoking process received the invocation for $op_1$ and updated its timestamp (line~\ref{fifoline:enqReqTSUpdate} or \ref{fifoline:deqReqTSUpdate}) before $op_1$ returned, and thus before it invoked $op_2$, so $op_2$'s timestamp will be totally ordered after $op_1$'s, implying it is also lexicographically after.  Construction~\ref{constr:fifo} then places $op_1$ before $op_2$ in $\pi$, contradicting our assumption.
 \end{proof}
 
-Next, we consider how each process locally executes each $Dequeue$ instance.  We show that all processes do so in the same way, meaning that their replicas of the data structure move through similar sequences of states, and thus continue to behave properly.  Processes may locally execute $Enqueue$ instances at different times, but since we store those instances' timestamps with the values in the local replicas, we will never delete a value from an $Enqueue$ intance later in the linearization.
+Next, we consider how each process locally executes each $Dequeue$ instance.  We show that all processes do so in the same way, meaning that their replicas of the data structure move through similar sequences of states, and thus continue to behave properly.  Processes may locally execute $Enqueue$ instances at different times, but since we store those instances' timestamps with the values in the local replicas, no $Dequeue$ instance never delete a value from an $Enqueue$ intance later in the linearization.
 
 \begin{lemma}\label{fifolem:prevLocalExec}
   When a process $p_i$ locally executes any $Dequeue$ instance $op$, for any instance $op'$ with a lexicographically smaller timestamp than $op$, $p_i$ has previously locally executed $op'$.
 \end{lemma}
 
 \begin{proof}
-  By line~\ref{fifoline:fullConfList}, $p_i$ will not locally execute $op$ until it has received a $DeqAck$ for $op$ from every process, either for $op$ or for a $Dequeue$ instance with larger timestamp than $op$ (line~\ref{fifoline:propagateEarlier}).  But when any process sends a $DeqAck$, on line~\ref{fifoline:sendDeqAck}, it has updated its timestamp to be larger than $op$'s timestamp.  Thus, any instance invoked at that process after that point will have a strictly, and thus lexicographically, larger timestamp than $op$.  This means that any instance $op'$ invoked at $p_j$ with a lexicographically smaller timestamp than $op$ must have been invoked before its invoking process sent a $DeqAck$ for $op$ or any later $Dequeue$ instance.
+  By line~\ref{fifoline:fullConfList}, $p_i$ will not locally execute $op$ until it has received a $DeqAck$ from every process, either for $op$ or for a $Dequeue$ instance with larger timestamp than $op$ (line~\ref{fifoline:propagateEarlier}).  But when any process sends a $DeqAck$, on line~\ref{fifoline:sendDeqAck}, it has updated its timestamp to be larger than $op$'s timestamp.  Thus, any instance invoked at that process after that point will have a strictly, and thus lexicographically, larger timestamp than $op$.  This means that any instance $op'$ invoked at $p_j$ with a lexicographically smaller timestamp than $op$ must have been invoked before its invoking process sent a $DeqAck$ for $op$ or any later $Dequeue$ instance.
 
   By FIFO message order, $p_j$'s request message for $op'$, which it sends on line~\ref{fifoline:sendEnqReq} or \ref{fifoline:sendDeqReq}, would have arrived at $p_i$ before the $DeqAck$ for $op$ from $p_j$, and $p_i$ would have either locally executed $op'$ on line~\ref{fifoline:executeEnq} if it was an $Enqueue$ instance, or put it in $PendingDequeues$ on line~\ref{fifoline:savePendingDeq} if it was a $Dequeue$ instance.  If it was a $Dequeue$ instance, the only time $p_i$ could remove $op'$ from $PendingDequeues$ is in lines~\ref{fifoline:fullConfList}-\ref{fifoline:deqReturn}, when $p_i$ locally executes $op'$.  Thus, when $p_i$ locally executes $op$, it must have already either locally executed $op'$, or have it in $PendingDequeues$.
 
@@ -334,17 +338,17 @@ This means that during local execution of a $Dequeue$ instance, each process has
 \end{lemma}
 
 \begin{proof}
-  We prove this claim by induction on $\pi$.  The empty sequence is legal.  Assume that in any prefix $\rho \cdot op$ of $\pi$, $\rho$ is legal.  We will show that $rho \cdot op$ is also legal which, by induction, implies that $\pi$ is legal.  Let $p_i$ be the process which invoked $op$.
+  We prove this claim by induction on $\pi$.  The empty sequence is legal.  Assume that in an arbitrary prefix $\rho \cdot op$ of $\pi$, $\rho$ is legal.  We will show that $rho \cdot op$ is also legal which, by induction, implies that $\pi$ is legal.  Let $p_i$ be the process which invoked $op$.
 
   If $op$ is an $Enqueue$ instance, then $\rho \cdot op$ is legal by Definition~\ref{def:FIFOQueue}.
 
   If $op$ is a $Dequeue$ instance, $op = Dequeue(-,ret)$, we must show that either $ret \neq \bot$ is the argument of the first unmatched $Enqueue$ instance in $\rho$ or there $ret = \bot$ and there are no unmatched $Enqueue$ instances in $\rho$.
 
-  We begin with the case that $ret \neq \bot$.  This means that when $p_i$ chose $ret$ as the return value in line~\ref{fifoline:chooseDeqValue}, it found $ret$ in its local replica of the queue, with timestamp lexicographically less than $ts(op)$.  Thus, $ret$ was the argument of some $Enqueue$ instance in $\rho$, since the only values added to an $lQueue$ are $Enqueue$ arguments, in line~\ref{fifoline:executeEnq}.
+  We begin with the case that $ret \neq \bot$.  This means that when $p_i$ chose $ret$ as the return value in line~\ref{fifoline:chooseDeqValue}, it found $ret$ in its local replica of the queue, with timestamp lexicographically less than $ts(op)$.  Thus, $ret$ was the argument of some $Enqueue$ instance in $\pi$, since the only values added to an $lQueue$ are $Enqueue$ arguments, in line~\ref{fifoline:executeEnq}.
 
-  We next prove that $Enqueue(ret,-)$ is the first unmatched $Enqueue$ instance in $\rho$.  By Lemma~\ref{fifolem:prevLocalExec}, when $p_i$ locally executes $op$ and chooses its return value, it has already locally executed every $Enqueue$ instance with a lexicographically smaller timestamp.  By Construction~\ref{constr:fifo}, these are the $Enqueue$ instances in $\rho$.  Thus, the set of elements $p_i$ has available to choose are the arguments of $Enqueue$ instances in $\rho$.  Further, by Corollary~\ref{fifolem:localExecOrder}, $p_i$ has locally executed every $Dequeue$ instance with timestamps smaller than $op$, which is exactly those $Dequeue$ instances in $\rho$.
+  We next prove that $Enqueue(ret,-)$ is the first unmatched $Enqueue$ instance in $\rho$.  By Lemma~\ref{fifolem:prevLocalExec}, when $p_i$ locally executes $op$ and chooses its return value, it has already locally executed every $Enqueue$ instance with a lexicographically smaller timestamp.  By Construction~\ref{constr:fifo}, these are the $Enqueue$ instances in $\rho$.  Thus, the set of elements $p_i$ has available to choose are the arguments of $Enqueue$ instances in $\rho$.  Further, by Corollary~\ref{fifolem:localExecOrder}, $p_i$ has locally executed every $Dequeue$ instance with timestamps smaller than $op$, which are exactly those $Dequeue$ instances in $\rho$.
 
-  Thus, $p_i$'s $lQueue$ contains exactly the arguments of unmatched $Enqueue$ instances in $\rho$, as well as potentially the arguments of some $Enqueue$ instances which appear in $\pi$ after $op$.  Line~\ref{fifoline:chooseDeqValue} chooses the value in $lQueue$ with the smallest timestamp, filtering to only those with timestamp smaller than $op$, which is the argument of the first unmatched $Enqueue$ instance in $\rho$, since we constructed $\rho$ in timestamp order.  Similarly, when any other process locally executes $op$, they will delete the same value from their $lQueue$ by the same logic, simply not returning it to their user by the check on line~\ref{fifoline:deqReturn}.  
+  Thus, $p_i$'s $lQueue$ contains the arguments of unmatched $Enqueue$ instances in $\rho$, as well as potentially the arguments of some $Enqueue$ instances which appear in $\pi$ after $op$.  Line~\ref{fifoline:chooseDeqValue} chooses the value in $lQueue$ with the smallest timestamp, filtering to only those with timestamp smaller than $op$, which is the argument of the first unmatched $Enqueue$ instance in $\rho$, since we constructed $\rho$ in timestamp order.  Similarly, when any other process locally executes $op$, they will delete the same value from their $lQueue$ by the same logic, simply not returning it to their user by the check on line~\ref{fifoline:deqReturn}.  
 
   The next case we consider is when $ret = \bot$.  In this case, when $p_i$ executes line~\ref{fifoline:chooseDeqValue}, it finds no element in $lQueue$ with smaller timestamp than $op$.  By the logic in the previous case, this means that every $Enqueue$ instance with timestamp smaller than $op$ is matched by a $Dequeue$ instance in $\rho$, so $\rho \cdot op$ is legal.
 
@@ -357,145 +361,87 @@ This means that during local execution of a $Dequeue$ instance, each process has
 \end{theorem}
 
 \begin{proof}
-  By Lemma~\ref{fifolem:realTimeOrder}, $\pi$ respects the real-time order of non-overlapping instance and by Lemma~\ref{fifolem:legal}, $\pi$ is a legal sequence of operation instance on a FIFO queue.  Thus, every run $R$ of Algorithm~\ref{alg:fifo} has a valid linearization, so it is a correct implementation.
+  By Lemma~\ref{fifolem:realTimeOrder}, $\pi$ respects the real-time order of non-overlapping instances and by Lemma~\ref{fifolem:legal}, $\pi$ is a legal sequence of operation instance on a FIFO queue.  Thus, every admissible timed run $R$ of Algorithm~\ref{alg:fifo} has a valid linearization, so it is a correct implementation.
 \end{proof}
  
 
 %%%%%%%%%%%%%%%
 \subsection{Complexity}
 
-As observed in Lemma~\ref{fifolem:responses}, the algorithm returns to every invocation after it receives acknowledgements from every other process.  This takes up to $2d$ time, since the request message must reach each other process before they can send the acknowledgement, and the two non-concurrent messages can each take up to $d$ time.
+As observed in Lemma~\ref{fifolem:responses}, the algorithm returns to every invocation after it receives acknowledgements from every other process.  This takes up to $2d$ time, since the request message must reach each other process before it can send an acknowledgement, and each pair of seuqential messages can each take up to $d$ time.  To our knowledge, this is equivalent to the best existing algorithm \cite{Lynch96}.
 
-This runtime is optimal, as we can show by a simple indistinguishability argument, that linearizable implementatino of $Dequeue$ must take at least $2d$ time from invocation to response.  The key fact is that $Dequeue$ is \emph{pair-free}.  A pair-free operation \cite{WangTalmageLeeWelch18} is one which both depends on and changes the state of the data structure, such that it is possible for a pair of adjacent instances to not be legal in reverse order.  For example, $Enqueue(1) \cdot Dequeue(1)$ is legal, but $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not, because the first $Dequeue$ instance changed the state of the structure.  Formally, there exist a legal sequence $\rho$ and two (not necesssarily distinct) instances $op_1, op_2$, such that $\rho \cdot op_1$ and $\rho \cdot op_2$ are both legal, but $\rho \cdot op_1 \cdot op_2$ and $\rho \cdot op_2 \cdot op_1$ are not both legal.
-
-\begin{lemma}\label{fifolem:pairfreeLB}
-  The worst-case cost of $Dequeue$ in our asynchronous, failure-free message passing model is at least $2d$.
-\end{lemma}
-
-\begin{proof}
-  We prove the claim by demonstrating two runs which are indistinguishable to the participating processes, but which require different linearizations, which cannot both be legal, because $Dequeue$ is pair-free.  In the following diagrams, each ray indicates the history of one process, with real time increasing to the right.  Curved edges between the processes' histories are messages, each starting at the earliest time processes could send information.
-
-  Assume some algorithm implements a queue with worst-case time of $Dequeue$ less than $2d$.
-
-  \begin{center}
-    \begin{tikzpicture}
-      \begin{scope}[xshift=-4cm,scale=.7]
-        \node (p0) at (-1,0){$p_0$};
-        \node (p1) at (-1,-3){$p_1$};
-        \draw[->] (p0.east) -- (5,0);
-        \draw[->] (p1.east) -- (5,-3);
-        
-        \node[draw,rectangle, minimum width=1cm,label=above:{$Deq_0$}] (d0) at (.5,0){};
-        \node[draw,rectangle, minimum width=1cm,label=below:{$Deq_1$}] (d1) at (1.75,-3){};
-
-        \draw[dashed] (1.125,.5) -- (1.125,-3.5);
-        
-        \path[-stealth] (d0.west) edge[bend left] (3,-3);
-        \path[-stealth] (3,-3) edge[bend right] (4.25,0);
-        \path[-stealth] (d1.west) edge[bend right] (3.5,0);
-        \path[-stealth] (3.5,0) edge[bend left] (4.5,-3);
-      \end{scope}
-
-      \begin{scope}[xshift=4cm,scale=.7]
-        \node (p0) at (-1,0){$p_0$};
-        \node (p1) at (-1,-3){$p_1$};
-        \draw[->] (p0.east) -- (5,0);
-        \draw[->] (p1.east) -- (5,-3);
-        
-        \node[draw,rectangle, minimum width=1cm,label=above:{$Deq_0$}] (d0) at (2,0){};
-        \node[draw,rectangle, minimum width=1cm,label=below:{$Deq_1$}] (d1) at (.5,-3){};
-        
-        \draw[dashed] (1.125,.5) -- (1.125,-3.5);
-
-        \path[-stealth] (d0.west) edge[bend left] (3,-3);
-        \path[-stealth] (3,-3) edge[bend right] (4.25,0);
-        \path[-stealth] (d1.west) edge[bend right] (3.5,0);
-        \path[-stealth] (3.5,0) edge[bend left] (4.5,-3);
-      \end{scope}
-    \end{tikzpicture}
-  \end{center}
-  In the run pictured on the left, $Deq_0$ must be $Dequeue(1)$, since it return before $Deq_1$'s invocation, and thus the only valid linearization is $Enqueue(1) \cdot Deq_0 \cdot Deq_1$.  In the run on the right, which is indistinguishable to the two processes, since it differs only in the real time of the two $Dequeue$ invocations and processes have no knowledge of real time, the only valid linearization is $Enqueue(1) \cdot Deq_1 \cdot Deq_0$, so $Deq_1$ must be $Dequeue(1)$.  But $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not legal, so the assumed algorithm is impossible.  
-\end{proof}
-
-\begin{theorem}
-  Algorithm~\ref{alg:fifo} is an optimal implementation of a FIFO Queue in an asynchronous, failure-free system.
-\end{theorem}
-
-This result intuitively seems like it out to apply to other pair-free operations, but generalizing formally is not quite so straightforward.  The proof relies on putting the structure in a state where there is only a single correct next return value, then not allowing two different processes to see that the other is executing the operation.  In general, showing that this initial state is reachable is more complicated.  As we see in the next section, while a $k$-Out-of-Order relaxed $Dequeue$ is still pair-free, it is much less subject to states with only a single correct next return value.   
+Since it is in a more restricted model, the lower bound from Wang et al. \cite{WangTalmageLeeWelch18} applies, telling us that the worst-case cost of $Dequeue$ must be at least $d$.  However, in an asynchronous system, a process has no way to know when $d$ time has elapsed.  The only possible timing knowledge is that when a message round trip completes, at most $2d$ time has elapsed.  Thus, our algorithm's runtime appears to be optimal.  The key fact in the proof of the lower bound is that $Dequeue$ is \emph{pair-free}.  A pair-free operation \cite{WangTalmageLeeWelch18} is one which both depends on and changes the state of the data structure, such that it is possible for a pair of adjacent instances to not be legal in reverse order.  For example, $Enqueue(1) \cdot Dequeue(1)$ is legal, but $Enqueue(1) \cdot Dequeue(1) \cdot Dequeue(1)$ is not, because the first $Dequeue$ instance changed the state of the structure.  Formally, there exist a legal sequence $\rho$ and two (not necesssarily distinct) instances $op_1, op_2$, such that $\rho \cdot op_1$ and $\rho \cdot op_2$ are both legal, but $\rho \cdot op_1 \cdot op_2$ and $\rho \cdot op_2 \cdot op_1$ are not both legal.
 
   
 %%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%
 \section{Asynchronous Out-of-Order Queues}
 
-We next move on to consider how we might be able to get around the lower bound in Lemma~\ref{fifolem:pairfreeLB}.  Relaxation has previously been useful for circumventing lower bounds \cite{TalmageWelch14}, so we consider it here.  The $k$-Out-of-Order relaxed $Dequeue$ is still pair-free, since $Dequeue$ cannot return the same value more than once, but there are more possible return values, many of which are not so order-constrained.  We follow \cite{TalmageWelch14} in using relaxation to split $Dequeue$ instances into two types: ``slow'' $Dequeue$s that behave like those in the FIFO algorithm above, taking $2d$ time to return, and ``fast'' $Dequeue$s which return a value immediately on execution, not waiting for the background coordinating communication that slows down other operations.  To enable the algorithm to do this without violating legality, we partition the set of $k$ values which a $Dequeue$ instance can return and give each process ownership of a disjoint subset.  Then that process can safely $Dequeue$ any of its own elements, knowing that no other process will return them to a $Dequeue$.  When a process runs out of elements, its next $Dequeue$ instance will be slow, as it takes the time to coordinate with other processes to determine its return value.  We use that same time to assign ownership of more values, so that future $Dequeue$ instances at that process can be fast again.
-
-Overall, if $k \geq n$, this means that many or most $Dequeue$ instances take no time at all for comunication delay, vastly outperforming the unrelaxed queue.  If $k < n$, our algorithm falls back to the above algorithm for unrelaxed queues.  The worst case per-instance cost is identical between the algorithms, but the average performance with relaxation is significantly better.  One interesting aspect of this algorithm, that makes it significantly more complex than just adding relaxation handling as previously done in partially synchronous systems to Algorithm~\ref{alg:fifo} is that we can no longer rely solely on timestamp order for linearization.  Since fast $Dequeue$ instances return instantly, there is no guarantee that timstamp order correctly captures their real-time order.  Thus, we must construct a much more complex linearization order to satisfy real-time order, then prove that it is legal.  We rely on invariants related to value ownership, to ensure that fast instances choose values that will be legal for them to return at their linearization points, even if those are quite differnt than the timestamp order the code actually sees. 
-
 %%%%%%%%%%%%%%%
 \subsection{Description}
 
-The asynchronous out of order queue is a relaxation of the existing queue structure that relaxes the specification that the queue can only return the first $Enqueue$ instance in $\rho$ that does not already have a matching $Dequeue(-, val)$ in $\rho$. Instead, it allows for the return of any of the first $K Enqueue$ instances in $\rho$ that do not already have a mathing $Dequeue(-, val)$ in $\rho$. 
+We next move on to consider how we might be able to improve performance, despite the lower bound on pair-free operations.  Relaxation has previously been useful for circumventing such lower bounds \cite{TalmageWelch14}, so we consider it here.  The $k$-Out-of-Order relaxed $Dequeue$ is still pair-free, since $Dequeue$ cannot return the same value more than once, but there are more possible return values, with weaker constraints on order.  We follow \cite{TalmageWelch14} in using relaxation to split $Dequeue$ instances into two types: ``slow'' $Dequeue$s that behave like those in the FIFO algorithm above, taking $2d$ time to return, and ``fast'' $Dequeue$s which return a value immediately on execution, not waiting for the coordinating communication that slows down other operations.  To enable the algorithm to do this without violating legality, we partition the set of $k$ values which a $Dequeue$ instance can return and give each process ownership of a disjoint subset.  Then that process can safely $Dequeue$ any of its own elements locally, knowing that no other process will return them to a $Dequeue$.  When a process runs out of elements, its next $Dequeue$ instance will be slow, as it takes the time to coordinate with other processes to determine its return value.  We use that same time to assign ownership of more values, so that future $Dequeue$ instances at that process can be fast again.
 
-The K-OOO queue also adds the behavior of prior claiming of elements for a system we will be referring to as "fast dequeueing". The existing behavior for dequeuing will be refered to as a "slow dequeue", which still utilizes the same behavior of Confirmation Lists to replicate information across the network. At points where processes share information however, there is additional behavior developed that allows processes to mark values in the queue that only they will be able to access, that will require no communication to be dequeued. At the point of execution of a "slow dequeue" if a process has a value that is marked to be dequeued by by that process, and the value that is marked is within the bounds of K, that it is one of the first K values in the queue structure, that value can be removed immediately without establishing a Confirmation List and requiring rounds of inter-process communication. Processes that are not the process that has "claimed" the value will additionally view that at the point of the slow dequeue, there is a labeled element for a fast dequeue from the same process, and remove both values from their local view of the queue, in order to ensure the same veiw of the structure. 
+Overall, if $k \geq n$, this means that at least half of $Dequeue$ instances can take no time at all for comunication delay, vastly outperforming the unrelaxed queue.  If $k < n$, our algorithm falls back to the above algorithm for unrelaxed queues.  The worst case per-instance cost is identical between the algorithms, but the average performance with relaxation is significantly better.  One interesting aspect of this algorithm, that makes it significantly more complex than just adding relaxation handling as previously done in partially synchronous systems to Algorithm~\ref{alg:fifo} is that we can no longer rely solely on timestamp order for linearization.  Since fast $Dequeue$ instances return instantly, there is no guarantee that timestamp order correctly captures their real-time order.  Thus, we must construct a much more complex linearization order to satisfy real-time order, then prove that it is legal.  We rely on invariants related to ownership of elements to ensure that fast $Dequeue$ instances choose values that will be legal for them to return at their linearization points, even if those points are quite different than the timestamp order the code actually sees. 
 
-The process of labeling is done by guaranteeing that processes have the same view of the queue at certain points, and utilizing this similar view and invariant calculations to collectively agree on which processes claim which values. Given the processes agree on the ordering of values within the queue, the labeling of the elements and the ordering of slow dequeues, we can prove that fast dequeues do not disrupt the existing behavior of the Queue ADT. 
 %%%%%%%%%%%%%%%
 \subsection{Algorithm}
 
-Because this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portions that are identical to those in that algorithm.  For example, the code for handling $Enqueue$ instances is exactly the same as that on lines~\ref{fifoline:invEnq}-\ref{fifoline:finishEnq} of Algorithm~\ref{alg:fifo}, so we omit it here, as well as the helper functions.  The code for handling $Dequeue$ is similar that above, but differentiates fast and slow instances, so we present it here. 
+Because this algorithm is built on Algorithm~\ref{alg:fifo}, we omit some portions that are identical to those in that algorithm.  For example, the code for handling $Enqueue$ instances is exactly the same as that on lines~\ref{fifoline:invEnq}-\ref{fifoline:finishEnq} of Algorithm~\ref{alg:fifo}, so we omit it here, as well as the helper functions.  The code for handling $Dequeue$ is similar to that above, but differentiates fast and slow instances, so we present it here. 
 
-In addition to the functions we used before, we add the following functions, which help with labeling elements for fast $Dequeue$:
+In addition to the functions we used before, we add the following functions to the variable storing each process' replica of the shared structure, which help with labeling elements for fast $Dequeue$:
 \begin{itemize}
-\item $lQueue.deqByLabel(p)$: Return and remove the oldest element in $lQueue$ which is labeled for process $p$.
-\item $lQueue.deqUnlabeled(ts)$: Return and remove the oldest element in $lQueue$ which has timestamp less than $ts$.
+\item $lQueue.peekByLabel(p)$: Return, without removing, the oldest element in $lQueue$ labeled for process $p$, $\bot$ if there is none.
+\item $lQueue.deqByLabel(p)$: Return and remove the oldest element in $lQueue$ labeled for process $p$.
+\item $lQueue.deqUnlabeled(ts)$: Return and remove the oldest unlabeled element in $lQueue$ which has timestamp less than $ts$.
+\item $lQueue.remove(val)$: Remove the specific value $val$ from $lQueue$.
 \item $lQueue.unlabeledSize()$: Return the number of unlabeled elements in $lQueue$.
-\item $lQueue.labelOldest(p,x)$: Label the $x$ oldest elements in $lQueue$ for process $p$.
+\item $lQueue.labelOldest(p,x)$: Label the $x$ oldest unlabeled elements in $lQueue$ for process $p$.
 \end{itemize}
   Pseudocode appears in Algorithm~\ref{alg:relaxed}.
 
 \begin{algorithm}
-  \caption{Queue with $k$-Out-of-Order Relaxed $Dequeue$: Handlers for $Dequeue$}\label{alg:relaxed}
+  \caption{Code for each process $p_i$ to implement a queue with $k$-Out-of-Order relaxed $Dequeue$}\label{alg:relaxed}
   \begin{algorithmic}[1]
     \Function{Dequeue}{}
       \State $Deq_{ts} = updateTS()$
       \If {$localQueue.peekByLabel(p_{i}) \neq \bot$}\label{oooline:checkFast}
         \State $ret = localQueue.deqByLabel(p_i)$ \label{oooline:fastDeq}
-        \State send $(Deq_f, ret, i, Deq_{ts})$ to all processes
-        \State \Return $ret$ \label{oooline:fastDeqResponse}
+        \State send $(Deq_f, ret, Deq_{ts}, i)$ to all processes
+        \State \Return $ret$ to user \label{oooline:fastDeqResponse}
       \Else
-        \State send $(Deq_s, null, i, Deq_{ts})$ to all processes
+        \State send $(Deq_s, null, Deq_{ts}, i)$ to all processes
       \EndIf
     \EndFunction
 
-    \Function{Receive}{($op, val, inv, Deq_{ts})$ from $p_{inv}$}
+    \Function{Receive}{($op, val, Deq_{ts}, inv)$ from $p_{inv}$}
       \State $updateTS(Deq_{ts})$
       \If{$Deq_{ts}$ is not in $PendingDequeues$}
-        \State $PendingDequeues.insertByTS(createList(Deq_{ts}, p_{inv}$))
+        \State $PendingDequeues.insertByTS(createList(op, Deq_{ts}, p_{inv}$))
       \EndIf
-      \State send $(op, val, DeqAck, Deq_{ts}, i, p_{inv})$ to all processes
+      \State send $(op, val, DeqAck, Deq_{ts}, p_{inv}, i)$ to all processes
     \EndFunction
 
-    \Function{Receive}{$(op, val, DeqAck, Deq_{ts}, j, p_{inv})$ from $p_j$}
+    \Function{Receive}{$(op, val, DeqAck, Deq_{ts}, p_{inv}, j)$ from $p_j$}
       \If{$Deq_{ts}$ not in $PendingDequeues$}
-        \State $PendingDequeues.insertByTs(createList(Deq_{ts}, p_{inv}))$
+        \State $PendingDequeues.insertByTS(createList(op, Deq_{ts}, p_{inv}))$
       \EndIf
       \State Define $currentConfList$ as the confirmation list in $PendingDequeues$ which has $ts == Deq_{ts}$
       \State $currentConfList.responses[j] = True$
       \State $propagateEarlierResponses(PendingDequeues)$ 
       \For{each $confirmationList$ in $PendingDequeues$, in increasing lexicographic timestamp order}
         \If{all $responses$ in $confirmationList$ are $True$}\label{oooline:localExec}
-          \If {$op == Deq_f$}
+          \If {$confirmationList.op == Deq_f$}
             \If{$p_i \neq p_{inv}$} $lQueue.remove(val)$\EndIf
           \Else    
-            \If {$localQueue.peekByLabel(p_{inv}) \neq \bot$}
-              \State $ret = lQueue.deqByLabel(p_{inv})$ \label{oooline:sDeqChooseLabeled}
-            \Else
+%            \If {$localQueue.peekByLabel(p_{inv}) \neq \bot$}
+%              \State $ret = lQueue.deqByLabel(p_{inv})$ \label{oooline:sDeqChooseLabeled}
+%            \Else
               \State $ret = lQueue.deqUnlabeled(Deq_{ts})$ \label{oooline:sDeqChooseUnlabeled}
-            \EndIf
+%            \EndIf
             \State $labelElements(p_{inv})$\label{oooline:label}
             \If{$p_i == p_{inv}$}
-              \State \Return $ret$
+              \State \Return $ret$ to user
             \EndIf
           \EndIf 
         \EndIf 
@@ -513,7 +459,7 @@ In addition to the functions we used before, we add the following functions, whi
 
 %%%%%%%%%%%%%%%
 \subsection{Correctness}
-For the K-OOO queue, we start with a similar structure of a run $R$ and a linearization $\pi$. The primary difference is that the linearization must be more complex, to deal with fast $Dequeue$ instances.  Several lemmas from Section~\ref{sec:fifoCorrectness} still apply to $Enqueue$ and slow $Dequeue$ instances, though we need to extend them to account for fast $Dequeue$ instances.  Once we deal with linearization, the out of order behavior of these instances does not significantly change the correctness argument, it only expands our access to the structure.
+The primary difference in the correctness proof for Algorithm~\ref{alg:relaxed} compare to that for the unrelaxed queue, is that the linearization must be more complex, to deal with fast $Dequeue$ instances.  Several lemmas from Section~\ref{sec:fifoCorrectness} still apply to $Enqueue$ and slow $Dequeue$ instances, though we need to extend them to account for fast $Dequeue$ instances.  Once we construct our linearization, the out of order behavior of these instances does not significantly change the correctness argument, it only expands our access to the structure.
 
 Formally, a fast $Dequeue$ instance is one which passes the check on line~\ref{oooline:checkFast}.  Any $Dequeue$ instance which fails this check is slow.
 
@@ -527,7 +473,7 @@ Let $R$ be an arbitrary, admissible, timed run of Algorithm~\ref{alg:relaxed}
   $Enqueue$ and slow $Dequeue$ instances are exactly as in Algorithm~\ref{alg:fifo}, so we omit the proof here, referring the reader to Lemma~\ref{fifolem:responses}.  Fast $Dequeue$ instances will necessarily generate a return on line~\ref{oooline:fastDeqResponse}.  Thus every invocation has a matching response.
 \end{proof}
 
-Since we now have operation instances, we can construct a permutation of all instances in $R$.  We then prove tha this permutation is a valid linearization, which shows the correctness of our algorithm.  We define operation instance timestamps as in the previous section.
+Since we now have operation instances, we can construct a permutation of all instances in $R$.  We then prove that this permutation is a valid linearization, which shows the correctness of our algorithm.  We define operation instance timestamps as for the previous algorithm.
 
 \begin{construction}\label{constr:relaxed}
   Construct an order of all operation instances in $R$ as follows:
@@ -539,7 +485,7 @@ Since we now have operation instances, we can construct a permutation of all ins
     \item $\sigma$ be the subsequence of all fast $Dequeue$ instances already in $\pi$ which return before $op$'s invocation;
     \item $\tau$ be the subsequence of all $Enqueue$ and slow $Dequeue$ instances invoked after $op$ returns.
     \end{itemize}
-    Place $op$ in $\pi$ immediately after the later of the last (in $\pi$) elements of $\rho$ and $\sigma$.\label{orderFast}
+    Place $op$ in $\pi$ immediately after the later of the last elements of $\rho$ and $\sigma$.\label{orderFast}
   \end{enumerate}
 \end{construction}
 
@@ -548,13 +494,13 @@ Since we now have operation instances, we can construct a permutation of all ins
 We need to prove that this sequence respects the real-time order of all non-overlapping operation instances.  We first note that the subsequence defined in step~\ref{orderSlow} respects real-time order by the argument in Lemma~\ref{fifolem:realTimeOrder}.
 
 \begin{lemma}\label{ooolem:fastDeqOrdering}
-  When we place each fast $Dequeue$ instance $op$ in step~ref{orderFast} of Construction~\ref{constr:relaxed}, it precedes, in $\pi$, all elements of $\tau$.
+  When we place each fast $Dequeue$ instance $op$ in step~\ref{orderFast} of Construction~\ref{constr:relaxed}, it precedes, in $\pi$, all elements of $\tau$.
 \end{lemma}
 
 \begin{proof}
   First, note that all elements of $\rho$ precede all elements of $\tau$ in $\pi$, by step~\ref{orderSlow}.  Next, we prove that all elements of $\sigma$ also precede all elements of $\tau$ in $\pi$.
 
-  Since every element of $\tau$ is invoked after $op$ returns and every element of $\sigma$ returns before $op$ is invoked, every element of $\sigma$ returns before any elmeent of $\tau$ is invoked.  Thus, an element $op'$ of $\sigma$ only follows an elment of $\tau$ in $\pi$ if some previously-placed fast $Dequeue$ instance (in the $\sigma$ when we placed $op'$) was placed in $\pi$ later than that element of $\tau$.  This argument holds in turn for that previously-placed fast $Dequeue$ instance, repeating all the way back to the first fast $Dequeue$ instance step~\ref{orderFast} placed in $\pi$.  That could only be placed after an instance in $op$'s $\tau$ if a previous one was, but there was no previous one, so neither that first fast $Dequeue$ nor any subsequent one could be placed in $\pi$ after an element of $\tau$.  Thus, $op$ precedes every element of $\tau$ in $\pi$.
+  Since every element of $\tau$ is invoked after $op$ returns and every element of $\sigma$ returns before $op$ is invoked, every element of $\sigma$ returns before any element of $\tau$ is invoked.  Thus, an element $op'$ of $\sigma$ only follows an element of $\tau$ in $\pi$ if some previously-placed fast $Dequeue$ instance (in the $\sigma'$ defined when we placed $op'$) was placed in $\pi$ later than that element of $\tau$.  This argument holds in turn for that previously-placed fast $Dequeue$ instance, repeating all the way back to the first fast $Dequeue$ instance which Step~\ref{orderFast} placed in $\pi$.  That could only be placed after an instance in $op$'s $\tau$ if a previous one was, but there was no previous one, so neither that first fast $Dequeue$ nor any subsequent one could be placed in $\pi$ after an element of $\tau$.  Thus, $op$ precedes every element of $\tau$ in $\pi$.
 \end{proof}
 
 \begin{lemma}
@@ -566,7 +512,7 @@ We need to prove that this sequence respects the real-time order of all non-over
   \begin{itemize}
   \item Both $op_1$ and $op_2$ are slow instances.  This follows from Lemma~\ref{fifolem:realTimeOrder}.
   \item Both $op_1$ and $op_2$ are fast $Dequeue$ instances.  Order follows by construction.  We place the later, in real time order, of $op_1$ and $op_2$ second, and by the definition of $\sigma$ in step~\ref{orderFast} of Construction~\ref{constr:relaxed}, $op_1$ is in $\sigma$, so we place $op_2$ in $\pi$ after $op_1$.
-  \item One of $op_1$ is a fast $Dequeue$ instance, the other is a slow instance.  When we place the fast instance (WLOG, $op_1$) in $\pi$, since $op_1$ and $op_2$ do not overlap, then if $op_2$ precedes $op_1$ in real-time order and was thus in $\rho$, so we place $op_1$ after $op_2$ in $\pi$ .  If $op_1$ precedes $op_2$ in real-time order, then $op_2 \in tau$, and Lemma~\ref{ooolem:fastDeqOrdering} proves that $op_1$ precedes $op_2$ in $\pi$.
+  \item One of $op_1$ and $op_2$ is a fast $Dequeue$ instance, the other is a slow instance.  When we place the fast instance (WLOG, $op_1$) in $\pi$, since $op_1$ and $op_2$ do not overlap, then if $op_2$ precedes $op_1$ in real-time order, it was thus in $\rho$, so we place $op_1$ after $op_2$ in $\pi$ .  If $op_1$ precedes $op_2$ in real-time order, then $op_2$ is in $\tau$, and Lemma~\ref{ooolem:fastDeqOrdering} proves that $op_1$ precedes $op_2$ in $\pi$.
   \end{itemize}
 
   Thus, in all cases, $\pi$ respects the real-time order of $op_1$ and $op_2$, for any pair of instances.
@@ -577,7 +523,7 @@ We need to prove that this sequence respects the real-time order of all non-over
 % Need to prove that once an element is labeled, it is always legal and never returned at a process for which it is not labeled
 % Prove legality: slow dequeues as before, fast dequeues can only happen after local execution of the slow dequeue *at the same process* which labeled them, so they are linearized after that, since instances at the same process cannot overlap.
 
-Now that we have a linearization of all instances in our run, we need to show that the return values the algorithm chooses are legal.  $Enqueue$ and slow $Dequeue$ instances function as in the unrelaxed case, with the only difference being how $Dequeue$ chooses its return values.  Now, it will skip elements labeled for other processes.  Since we label at most $\lfloor n/k\rfloor$ elements per process, this will still leave it choosing from among the $k$ oldest elements in the queue, which is legal by the definition of a relaxed queue.  We begin our legality proof by restating Lemma~\ref{fifolem:prevLocalExec} and its corollary in the context of the relaed queue implementation.  We do not re-prove it, as the proof is fundamentally identical.  We note that, despite removing the return value from its $lQueue$ in line~\ref{oooline:fastDeq}, we still refer to local execution as the code starting when line~\ref{oooline:localExec} passes.
+Now that we have a linearization of all instances in our run, we need to show that the return values the algorithm chooses are legal.  $Enqueue$ and slow $Dequeue$ instances behave as in the unrelaxed case, with the only difference being how a slow $Dequeue$ chooses its return value.  Now, it will skip elements labeled for other processes and take the oldest unlabeled element.  Since we label at most $\lfloor n/k\rfloor$ elements per process and a $Dequeue$ is only slow when its invoking process has no labeled elements, this will still leave it choosing from among the $k$ oldest elements in the queue, which is legal by the definition of the relaxed queue.  We begin our legality proof by restating Lemma~\ref{fifolem:prevLocalExec} and its corollary in the context of the relaed queue implementation.  We do not re-prove it, as the proof is fundamentally identical.  We note that, despite fast $Dequeue$ instances removing their return value from the invoking process' $lQueue$ in line~\ref{oooline:fastDeq}, we still refer to local execution of the instance as the code starting when line~\ref{oooline:localExec} passes.
 
 \begin{lemma}
   When a process $p_i$ locally executes any $Dequeue$ instance $op$, for any instance $op'$ with a lexicographically smaller timestamp than $op$, $p_i$ has previously locally executed $op'$.
@@ -594,7 +540,7 @@ We can now prove the following invariant of our labeling scheme that will enable
 \end{lemma}
 
 \begin{proof}
-  The algorithm chooses $Dequeue$ return values in three places: line~\ref{oooline:fastDeq} at a fast $Dequeue$'s invocation or lines~\ref{oooline:sDeqChooseLabeled}, \ref{oooline:sDeqChooseUnlabeled} in local execution of a fast $Dequeue$ at its invoking process.  The last of these will never return a labeled element, so the claim vacuously holds there.  The first two places a process chooses a return value for a $Dequeue$ instance, it chooses one labeled for the instance's invoking process, and we have the claim.
+  The algorithm chooses $Dequeue$ return values in two places: line~\ref{oooline:fastDeq} at a fast $Dequeue$'s invocation or on line~\ref{oooline:sDeqChooseUnlabeled} in local execution of a slow $Dequeue$ at its invoking process.  The latter of these will never return a labeled element, so the claim vacuously holds there.  In the first option, it chooses one labeled for the instance's invoking process, and we have the claim.
 \end{proof}
 
 We can further observe that the code never removes a label, so once processes label a particular element for $p_i$, they will only remove it as the return value of a $Dequeue$ instance invoked at $p_i$.
@@ -607,22 +553,25 @@ We can further observe that the code never removes a label, so once processes la
   We proceed by induction on $\pi$ and prove the following claim in tandem with and to aid in the primary result:
 
   \begin{claim}\label{ooolem:safeLabels}
-    Any $Dequeue$ instance which labels elements during its local execution (line~\ref{oooline:label}) labels only elements which are among the arguments of the $k$ oldest $Enqueue$ instances in the prefix of $\pi$ ending with that $Dequeue$ instance.
+    Any $Dequeue$ instance $op$ which labels elements during its local execution (line~\ref{oooline:label}) labels only elements which are among the arguments of the $k$ oldest $Enqueue$ instances in the prefix of $\pi$ ending with that $Dequeue$ instance.  All processes label the same elements during local execution of $op$.
   \end{claim}
 
   The empty sequence is legal.  We assume that for an arbitrary prefix $\rho \cdot op$ of $\pi$, $\rho$ is legal and Claim~\ref{ooolem:safeLabels} holds for all instances in $\rho$.  We will show that $\rho \cdot op$ is also legal and any element $op$ labels is the argument to one of the first $k$ unmatched $Enqueue$ instances in $\rho \cdot op$.  Let $p_i$ be $op$'s invoking process and proceed by cases on $op$'s operation type:
   \begin{itemize}
   \item $op$ is an $Enqueue$ instance.  Since $Enqueue$ has no return value, $\rho \cdot op$ is always legal.
 %
-  \item $op$ is a slow $Dequeue$ instance, $op = Dequeue(-,ret)$.  $p_i$ chose $ret$ from its $lQueue$ in either line~\ref{oooline:sDeqChooseLabeled} or \ref{oooline:sDeqChooseUnlabeled}.  If it chose it in line~\ref{oooline:sDeqChooseLabeled}, then it was a labeled element, which means that it was the argument of one of the first $k$ unmatched $Enqueue$ instances in a prefix of $\pi$ before some previous slow $Dequeue$ instance.  By Lemma~\ref{ooolem:labelOwner}, no other process could have returned $ret$, and $p_i$ removes it from its $lQueue$ before returning it, so could not have returned it as the return value of another $Dequeue$ instace, and thus $ret$ is still the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho$.
+  \item $op$ is a slow $Dequeue$ instance, $op = Dequeue(-,ret)$.  $p_i$ chose $ret$ from its $lQueue$ in line~\ref{oooline:sDeqChooseUnlabeled}.  %  If it chose it in line~\ref{oooline:sDeqChooseLabeled}, then it was a labeled element, which means that it was the argument of one of the first $k$ unmatched $Enqueue$ instances in a prefix of $\pi$ before some previous slow $Dequeue$ instance.  By Lemma~\ref{ooolem:labelOwner}, no other process could have returned $ret$, and $p_i$ removes it from its $lQueue$ before returning it, so could not have returned it as the return value of another $Dequeue$ instace, and thus $ret$ is still the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho$.
+%
+    %    If $p_i$ chose $ret$ in line~\ref{oooline:sDeqChooseUnlabeled} and
+    If $ret \neq \bot$, then we know that it chose the argument of an unmatched $Enqueue$ instance in $\rho$, since the algorithm puts only $Enqueue$ arguments in $lQueue$, line~\ref{oooline:sDeqChooseUnlabeled} only returns values with timetamps below $ts(op)$, and Corollary~\ref{ooolem:localExecOrder} implies that $p_i$ has already locally executed any $Dequeue$ instance in $\rho$, removing its return value from $lQueue$.  Further, $deqUnlabeled$ chooses the oldest eligible element currently in $lQueue$.  By line~\ref{oooline:labelOldest}, no more than $\lfloor k/n\rfloor$ elements are labeled for each process and there are no elements labeled $p_i$, or $op$ would be a fast $Dequeue$.  Thus, there are fewer than $k$ labeled elements in $lQueue$ and the oldest unlabeled element is among the $k$ oldest elements in $lQueue$ and therefore the argument of one of the $k$ oldest $Enqueue$ instances in $\rho$, and $\rho \cdot op$ is legal.
 
-    If $p_i$ chose $ret$ in line~\ref{oooline:sDeqChooseUnlabeled} and $ret \neq \bot$, then we know that it chose the argument of an unmatched $Enqueue$ instance in $\rho$, since the algorithm puts only $Enqueue$ arguments in $lQueue$, line~\ref{oooline:sDeqChooseUnlabeled} only returns values with timetamps below $ts(op)$, and Corollary~\ref{ooolem:localExecOrder} implies that $p_i$ has already locally executed any $Dequeue$ instance in $\rho$, removing its return value.  Further, $deqUnlabeled$ chooses the oldest eligible element currently in $lQueue$.  By line~\ref{oooline:labelOldest}, no more than $\lfloor k/n\rfloor$ elements are labeled for each process and there are no elements labeled $p_i$, or it would select a return value in line~\ref{oooline:sDeqChooseLabeled} instead, there are fewer than $k$ labeled elements in $lQueue$, so the oldest unlabeled element is among the $k$ oldest elements in $lQueue$ and thus the argument of one of the $k$ oldest $Enqueue$ instances in $\rho$, and $\rho \cdot op$ is legal.
+    If $ret = \bot$, then there were no unlabeled elements in $lQueue$ with timestamp smaller than $ts(op)$, which means there are fewer than $k$ unmatched $Enqueue$ instances in $\rho$, and $\rho \cdot op$ is legal.
 
-    If $ret = \bot$, then there were no unlabeled elements in $lQueue$ with timestamp smaller than $ts(op)$, which means there are fewer than $k$ unmatched $Enqueue$ instances in $\rho$, and $\rho \cdot op$ is legal.  By Corollary~\ref{ooolem:localExecOrder}, every process locally executes all $Dequeue$ instances in the same order, applying the same deterministic logic.  The only possible differences are that any $p_j$ may have fewer elements labeled for itself, as it has returned them to fast $Dequeue$ instances which it has not yet locally executed.  These instances do not affect the choice of return value for a slow $Dequeue$, though, so each $p_j$ will delete the same $ret$ when locally executing $op$.  
+    By Corollary~\ref{ooolem:localExecOrder}, every process locally executes all $Dequeue$ instances in the same order, applying the same deterministic logic.  The only possible differences are that any $p_j$ may have fewer elements labeled for itself, as it has returned them to fast $Dequeue$ instances which it has not yet locally executed.  These instances do not affect the choice of return value for a slow $Dequeue$, though, so each $p_j$ will delete the same $ret$ when locally executing $op$.  
 
     Finally, we need to prove that Claim~\ref{ooolem:safeLabels} still holds after each process executes line~\ref{oooline:label}, and that all processes label the same elements for $p_i$.  But this follows by the same logic that tells us that $ret$ was the argument of one of the first $k$ unmatched $Enqueue$ intances in $\rho$, as each process chooses elements to label that are the oldest unlabeled elements in $lQueue$.  Thus, each element labeled in the local execution of $op$ is the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho \cdot op$.  Since all processes locally executed all $Dequeue$ instances in the same order, each will label the same elements while locally executing $op$.
 %
-  \item $op$ is a fast $Dequeue$ instance, $op = Dequeue(,-,ret)$.  Since we only label elements for process $p_i$ during local execution of a slow $Dequeue$ instance $op_\ell$ invoked at $p_i$ and no process can have two pending operation instances at the same time, we know that $op$ is invoked after $op_\ell$ returned, so $op$ linearizes after $op_\ell$.  Thus, by Claim~\ref{ooolem:safeLabels}, $ret$ was the argument of one of the first $k$ unmatched $Enqueue$ instances in $\pi$ before $op_\ell$, and thus before $op$.  By Lemma~\ref{ooolem:labelOwner}, no other process could have returned $ret$, and $p_i$ removes it from its $lQueue$ before returning it, so could not have returned it as the return value of another $Dequeue$ instance, and thus $ret$ is still the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho$.
+  \item $op$ is a fast $Dequeue$ instance, $op = Dequeue(,-,ret)$.  Since we only label elements for process $p_i$ during local execution of a slow $Dequeue$ instance $op_\ell$ invoked at $p_i$ and no process can have two pending operation instances at the same time, we know that $op$ is invoked after $op_\ell$ returned, so $op$ linearizes after $op_\ell$.  Thus, by Claim~\ref{ooolem:safeLabels}, $ret$ was the argument of one of the first $k$ unmatched $Enqueue$ instances in $\pi$ before $op_\ell$, so it must still be before $op$.  By Lemma~\ref{ooolem:labelOwner}, no other process could have returned $ret$, and $p_i$ removes $Dequeue$ return values from its $lQueue$ before returning them, so could not have returned it as the return value of another $Dequeue$ instance, and thus $ret$ is still the argument of one of the first $k$ unmatched $Enqueue$ instances in $\rho$.
   \end{itemize}
 \end{proof}
 
@@ -633,7 +582,7 @@ We can further observe that the code never removes a label, so once processes la
 %%%%%%%%%%%%%%%
 \subsection{Complexity}
 
-Since each operation instance returns to the user in or before local execution, which occurs no later than after received acknowledgments from every process, sent when they first receive a message about the invocation, the worst-case response time of each operation in Algorithm~\ref{alg:relaxed} is $2d$.  As mentioned above, we do not know whether we can improve this worst-case lower bound, since the $k$-Out-of-Order relaxed $Dequeue$ is still pair-free.
+Since each operation instance returns to the user in or before local execution, which occurs no later than when the invoking process receives acknowledgments from every process, sent when they first receive a message about the invocation, the worst-case response time of each operation in Algorithm~\ref{alg:relaxed} is $2d$.  As mentioned above, we do not know whether we can improve this worst-case lower bound, since the $k$-Out-of-Order relaxed $Dequeue$ is still pair-free.
 
 However, in many typical scenarios, most $Dequeue$ instances will return with no delay at all.  Specifically, in a \emph{heavily-loaded} run, which starts with at least $k$ $Enqueue$ instances, and maintains at least $k$ more $Enqueue$ than $Dequeue$ instances, only one in every $\lfloor k/n\rfloor$ $Dequeue$ instances will take $2d$.  Thus, a typical total cost of $m$ $Dequeue$ instances in a heavily-loaded run would be $\left\lceil\frac{m}{\lfloor k/n\rfloor}\right\rceil(2d)$.  This is inversely proportional to the degree of relaxation $k$, so we can see that increasing relaxation allows us to reduce the total cost at will.  At $k=2n$, we roughly halve the total runtime.  At $k=3n$, it is a third of that of an unrelaxed queue, and so on.  Thus, relaxation allows us to practically circumvent lower bounds on the performance of shared data structures, via a tunable tradeoff between ordering guarantees and performance.
 
@@ -641,9 +590,9 @@ However, in many typical scenarios, most $Dequeue$ instances will return with no
 %%%%%%%%%%%%%%%
 \section{Conclusion}
 
-We have presented two algorithms, one implementing a traditional fifo queue and one implementing a queue with $k$-Out-of-Order relaxed $Dequeue$, in asynchronous failure-free systems.  Both of our algorithms have a complexity of one message round trip ($2d$) per operation instance, which is optimal for the unrelaxed queue.  The relaxed queue algorithm has the same worst-case complexity, but much lower average complexity.  Thus, we have shown that relaxation can not only improve a queue's performance in idealized partially-synchronous models, but also in asynchronous models, by making many $Dequeue$ instances able to return after purely local computation, leaving coordination to happen in the background and allowing the user program to make progress.
+We have presented two algorithms, one implementing a traditional FIFO queue and one implementing a queue with $k$-Out-of-Order relaxed $Dequeue$, in asynchronous failure-free systems.  Both of our algorithms have a worst-case complexity of one message round trip ($2d$) per operation instance.  The relaxed queue algorithm has the same worst-case complexity, but much lower average complexity.  Thus, we have shown that relaxation can not only improve a queue's performance in idealized partially-synchronous models as prior work showed, but also in asynchronous models, by making many $Dequeue$ instances able to return after purely local computation, leaving coordination to happen in the background and allowing the user program to make progress.
 
-Both of our algorithms offer full replication.  There is an existing centralized algorithm for the unrelaxed queue with equal performance to ours, but that puts a heavy load and reliance on one process.  While we do not here consider failures, having a replicated algorithm puts us in a good place to extend our algorithms to tolerate failures.  We are continuing in that direction exploring how much extra cost failure-tolerance imposes, and how much of that relaxation may enable us to avoid.
+Both of our algorithms offer full replication.  There is an existing centralized algorithm for the unrelaxed queue with equal performance to ours \cite{Lynch96}, but that puts a heavy load and reliance on one process.  While we do not here consider failures, having a replicated algorithm puts us in a good place to extend our algorithms to tolerate failures.  We are continuing in that direction, exploring how much extra cost failure-tolerance imposes, and how much of that cost relaxation may enable us to avoid.
 
 \bibliography{refs.bib}
 
