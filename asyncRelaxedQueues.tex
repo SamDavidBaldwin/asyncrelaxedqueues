@@ -229,7 +229,7 @@ This algorithm is based on that of Talmage and Welch \cite{TalmageWelch14}.  Ins
       \EndIf
       \State Define $currentConfList$ as the confirmation list in $PendingDequeues$ which has $ts == Deq_{ts}$
       \State $currentConfList.responses[j] = True$ \label{fifoline:setResponse}
-      \State $propagateEarlierResponses(PendingDequeues, Deq_{ts}, j)$ \label{fifoline:propagateEarlier}
+      \State $propagateEarlierResponses(PendingDequeues, Deq_{ts})$ \label{fifoline:propagateEarlier}
 
       \For{each $confirmationList$ in $PendingDequeues$, in increasing lexicographic timestamp order}
         \If{all $response$s in $confirmationList$ are $True$}\label{fifoline:fullConfList}
@@ -428,7 +428,7 @@ In addition to the functions we used before, we add the following functions to t
       \EndIf
       \State Define $currentConfList$ as the confirmation list in $PendingDequeues$ which has $ts == Deq_{ts}$
       \State $currentConfList.responses[j] = True$
-      \State $propagateEarlierResponses(PendingDequeues)$ 
+      \State $propagateEarlierResponses(PendingDequeues, Deq_{ts})$ 
       \For{each $confirmationList$ in $PendingDequeues$, in increasing lexicographic timestamp order}
         \If{all $responses$ in $confirmationList$ are $True$}\label{oooline:localExec}
           \If {$confirmationList.op == Deq_f$}
